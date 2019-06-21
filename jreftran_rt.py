@@ -1,8 +1,9 @@
 import numpy as np
 from numba import jit
+from numba import njit, float32, int32,complex64
 
 # https://stackoverflow.com/questions/43100286/python-trigonometric-calculations-in-degrees
-# @jit
+@jit
 def sind(x):
     y = np.sin(np.radians(x))
     I = x/180.
@@ -35,8 +36,10 @@ Example: Finding the coefficients for a 200nm gold layer surrounded by air, usin
         T = 1.1593e-04                      transmissivity (fraction of intensity that is transmitted) 
         A = 0.5296                          absorptivity (fraction of intensity that is absorbed in the film stack) 
 '''
-# @jit
-def jreftran_rt(wavelength,d,n,t0,polarization):
+#@njit(float32(float32,float32[:],complex64 [:],float32, int32))
+#def jreftran_rt(wavelength: int,d:float,n:complex64,t0:float,polarization: int)-> float:
+@jit
+def jreftran_rt(wavelength, d, n, t0, polarization):
     # x = sind(np.array([0,90,180,359, 360]))
     Z0 = 376.730313     #impedance of free space, Ohms
     Y = n / Z0
@@ -88,6 +91,7 @@ def jreftran_rt(wavelength,d,n,t0,polarization):
     A = A.real
     # return r,t,R,T,A,Y_tot,eta_one,fx,Re,Im
     return r, t, R, T, A
+    #return R
 
 if __name__ == '__main__':
     if True:    # Example: Finding the coefficients for a 200nm gold layer surrounded by air, using the Johnson and Christy data
