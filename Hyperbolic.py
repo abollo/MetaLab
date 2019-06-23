@@ -3,17 +3,21 @@ from jreftran_rt import *
 import cmath
 import argparse
 
-def HeatMap(R,mType,title,xitas,lendas):
+def HeatMap(R,mType,title,args,lendas):
+    xitas = args.xitas
+    ticks = np.linspace(0, 1, 10)
+    xlabels = [int(i) for i in np.linspace(300, 2000, 10)]
+    x0, x1 = xitas.min(), xitas.max()
+    ylabels = ["{:.3g}".format(i) for i in np.linspace(x0, x1, 10)]
     #plt.imshow(R);      plt.show()
-    fig, ax = plt.subplots(figsize=(8,8))     #more concise than plt.figure:
+    s = max(R.shape[1] / args.dpi, R.shape[0] / args.dpi)
+    figsize = (s,s)
+    fig, ax = plt.subplots(figsize=figsize,dpi=args.dpi)     #more concise than plt.figure:
     #fig.set_size_inches(18.5, 10.5)
     ax.set_title('Reflectance\n{}'.format(title))
     cmap = 'coolwarm'  # "plasma"  #https://matplotlib.org/examples/color/colormaps_reference.html
     #cmap = sns.cubehelix_palette(start=1, rot=3, gamma=0.8, as_cmap=True)
     if True:
-        ticks = np.linspace(0, 1, 10)
-        ylabels = [int(i) for i in np.linspace(0, 90, 10)]
-        xlabels = [int(i) for i in np.linspace(300, 2000, 10)]
         #cbar_kws={'label': 'Reflex', 'orientation': 'horizontal'}
         # sns.set(font_scale=0.2)
         #  cbar_kws={'label': 'Reflex', 'orientation': 'horizontal'} , center=0.6
@@ -34,7 +38,7 @@ def HeatMap(R,mType,title,xitas,lendas):
         cax.set_frame_on(False)
         plt.colorbar(orientation='vertical')
 
-    path = 'E:\MetaLab\hyperbolic\{}\{}.jpg'.format(mType,title)
+    path = 'E:\MetaLab\hyperbolic\{}\{}_[{}].jpg'.format(mType,title,R.shape)
     plt.savefig(path)
     #plt.show()
     print("")
@@ -50,7 +54,7 @@ def N_maters_dict(materials = ['au', 'ag', 'al', 'cu']):
         dict[mater]=n_au
     return dict
 
-def Hyperbolic_metamaterial_(N_al,N_au,d_al,d_au,polarisation,mType,title,N_dict):
+def Hyperbolic_metamaterial_(N_al,N_au,d_al,d_au,polarisation,mType,title,N_dict,args):
     nm = 1.0e-9
     epsilon0 = 1.0 / (36 * np.pi) * nm                      # dielectric constant of the free space
     lendas = np.arange(300,2010,10)*nm               #300:10:2000[nm]
@@ -61,13 +65,10 @@ def Hyperbolic_metamaterial_(N_al,N_au,d_al,d_au,polarisation,mType,title,N_dict
         title=""
     nLenda =len(lendas)
     #t_0 = np.arange(0,90,0.2)
-    if False:
-        t_0,t1,t2 = np.arange(0,20,1),np.arange(20,40,0.05),np.arange(40,90,1)
-        xitas=np.concatenate([t_0,t1,t2])
-    else:
-        xitas = np.arange(0, 90, 0.1)
-        xitas = np.arange(30, 60, 0.001)
-    M = len(xitas)
+
+    #xitas = np.arange(0, 90, 0.1)
+    #xitas = np.arange(30, 60, 0.001)
+    M = len(args.xitas)
     N = N_al + N_au
     k = 0
     d=np.zeros(N+2)
@@ -109,9 +110,9 @@ def Hyperbolic_metamaterial_(N_al,N_au,d_al,d_au,polarisation,mType,title,N_dict
                 #the refractive index of the each layer
                 #Complex refractive index for eatch layer
                 row = (int)(M-1-j);  col=(int)(i)   #数据格式原因
-                r[row,col], t[row,col], R[row,col], T[row,col], A[row,col] = jreftran_rt(lendas[i],d,n_data[i,:],xitas[j],polarisation)
-    print("")
-    HeatMap(R,mType,title,xitas,lendas)
+                r[row,col], t[row,col], R[row,col], T[row,col], A[row,col] = jreftran_rt(lendas[i],d,n_data[i,:],args.xitas[j],polarisation)
+    #print("")
+    HeatMap(R,mType,title,args,lendas)
 
 def parse_args():
     parser = argparse.ArgumentParser('Metlab Hyperbolic')
@@ -128,6 +129,12 @@ def parse_args():
 
 if __name__ == '__main__':
     args = parse_args()
+    args.xitas= np.arange(0, 90, 0.1)
+    args.dpi=100
+    if False:   #6.21   尝试
+        args.delta_angle=0.001
+        args.xitas = np.arange(40, 55.+args.delta_angle, args.delta_angle)
+
     N_case,case = 1000,0
     mType = 'random'        #'al'
     #ud_au = 5  # 金属厚度[nm]
@@ -166,7 +173,8 @@ if __name__ == '__main__':
         title="{}_{}".format(mType,d_al_TM)
         #if sum * 1.46 < (300 - 25):
         if sum * 1.46 < (300):
-            Hyperbolic_metamaterial_(N_al, N_au, d_al_TM, d_au, polarisation, mType, title, N_dict)
+            Hyperbolic_metamaterial_(N_al, N_au, d_al_TM, d_au, polarisation, mType, title, N_dict,args)
             print("{}:\t{:.4g} sum={} d={},{}".format(case,time.time()-t0,sum,d_au,d_al_TM))
             case = case+1
+            break
 
