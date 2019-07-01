@@ -1,3 +1,6 @@
+import sys
+sys.path.append('E:/MetaLab/surface_plasmon/')
+
 from some_libs import *
 from jreftran_rt import *
 import cmath
@@ -5,6 +8,7 @@ import argparse
 import pickle
 from datetime import datetime
 import gzip
+from numba import jit
 
 def N_maters_dict(args,materials = ['au', 'ag', 'al', 'cu']):
     dict = {}
@@ -68,26 +72,52 @@ class SP_device(object):
         ax.set_xticks(ticks * x_limit[1])
         path = '{}/{}/{}_[{}].jpg'.format(args.dump_dir,mType,title,R.shape)
         plt.savefig(path,bbox_inches='tight')
+        plt.close("all")
         #plt.show()
         print("")
+
+    def R_2D(self,args):
+        d, n_data = self.thicks, self.n_data
+        nXita = len(args.xitas)
+        nLenda = len(args.lendas)
+        self.R = np.zeros((nXita - 1, nLenda))
+        M0 = np.zeros((2, 2, d.shape[0]), dtype=complex)
+        M_t0 = np.identity(2, dtype=complex)
+        print("")
+        for i in range(nLenda):  # wavelength's number
+            for j in range(nXita - 1):  # angle
+                M = M0;
+                M_t = M_t0
+                row = (int)(nXita - 2 - j);
+                col = (int)(i)  # 数据格式原因
+                r = jreftran_R(args.lendas[i], d, n_data[i, :], args.xitas[j], polarisation, M, M_t)
+                if np.isnan(r):
+                    print("nan@[{},{}]".format(row, col))
+                self.R[row, col] = r
+        del M0,M_t0
+        gc.collect()
+
+    def __del__(self):
+        del self.n_data,
+        gc.collect()
 
     def __init__(self,N_al,N_au,d_al,d_au,polarisation,mType,title,N_dict,args):
         self.args = args
 
         nm = 1.0e-9
         epsilon0 = 1.0 / (36 * np.pi) * nm                      # dielectric constant of the free space
-        lendas = np.arange(300,2010,10)*nm               #300:10:2000[nm]
+        # lendas = np.arange(300,2010,10)*nm               #300:10:2000[nm]
         if mType != 'random':
             #fb1 = np.loadtxt(N_r_path)        fb2 = np.loadtxt(N_i_path)        n_au = fb1[:,1]+1j*fb2[:,1]
             n_au = N_dict[mType]
         else:
             title=""
-        nLenda =len(lendas)
+        nLenda =len(args.lendas)
         #t_0 = np.arange(0,90,0.2)
 
         #xitas = np.arange(0, 90, 0.1)
         #xitas = np.arange(30, 60, 0.001)
-        M = len(args.xitas)
+        nXita = len(args.xitas)
         N = N_al + N_au
         k = 0
         self.thicks=np.zeros(N+2)
@@ -118,25 +148,24 @@ class SP_device(object):
         d[N+1]=np.nan
         n_data[:,N+1] = 1       #air
         #print("lenda={}\nd={}\nn_data={}\nxitas={}".format(lendas,d,n_data,xitas))
-        r = np.zeros((M,nLenda),dtype=np.complex64);
-        t = np.zeros((M,nLenda),dtype=np.complex64);
-        R=np.zeros((M,nLenda),dtype=np.float32)
-        T = np.zeros((M,nLenda));
-        A= np.zeros((M,nLenda))
-        if False:
-            for i in range(nLenda):                      #wavelength's number
-                n_ = n_data[i,:]
-                r, t, R, T, A = jreftran_rt_vector(lendas[i],d,n_data[i,:],xitas,polarisation)
+
+        if True:
+            self.R_2D(args)
         else:
+            self.R=np.zeros((nXita-1,nLenda))
+            M0 = np.zeros((2, 2, d.shape[0]), dtype=complex)
+            M_t0 = np.identity(2, dtype=complex)
+            print("")
             for i in range(nLenda):                   #wavelength's number
-                for j in range(M):              #angle
-                    #the refractive index of the each layer
-                    #Complex refractive index for eatch layer
-                    row = (int)(M-1-j);  col=(int)(i)   #数据格式原因
-                    r[row,col], t[row,col], R[row,col], T[row,col], A[row,col] = jreftran_rt(lendas[i],d,n_data[i,:],args.xitas[j],polarisation)
-        #print("")
-        self.R = R
-        #HeatMap(R,mType,title,args,lendas)
+                for j in range(nXita-1):              #angle
+                    M=M0;      M_t=M_t0
+                    row = (int)(nXita-1-j);  col=(int)(i)   #数据格式原因
+                    r = jreftran_R(lendas[i],d,n_data[i,:],args.xitas[j],polarisation,M,M_t)
+                    if np.isnan(r):
+                        print("nan@[{},{}]".format(row,col))
+                    self.R[row,col] = r
+            del M,M_t;        gc.collect()
+
 
 def parse_args():
     parser = argparse.ArgumentParser('Metlab Hyperbolic')
@@ -157,12 +186,14 @@ if __name__ == '__main__':
     args.random_seed = datetime.now()
     args.delta_angle = 0.1
     args.xitas = np.arange(0, 90+args.delta_angle, args.delta_angle)
+    nm = 1.0e-9
+    args.lendas = np.arange(300,2010,10)*nm
     args.mater_file_dir = 'E:/MetaLab/hyperbolic'
     if False:   #6.21   尝试
         args.delta_angle=0.001
         args.xitas = np.arange(40, 55.+args.delta_angle, args.delta_angle)
 
-    N_case,case = 1000,0
+    N_case,case = 5000,0
     mType = 'random'        #'al'
     #ud_au = 5  # 金属厚度[nm]
     N_dict = N_maters_dict(args)
@@ -205,6 +236,7 @@ if __name__ == '__main__':
         if sum * 1.46 < (300):
             device = SP_device(N_al, N_au, d_al_TM, d_au, polarisation, mType, title, N_dict,args)
             device.HeatMap()
+            del device;     gc.collect()
             print("{}:\t{:.4g} sum={} d={},{}".format(case,time.time()-t0,sum,d_au,d_al_TM))
             case = case+1
             #break

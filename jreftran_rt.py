@@ -1,4 +1,5 @@
 import numpy as np
+import gc
 from numba import jit
 from numba import njit, float32, int32,complex64
 
@@ -38,8 +39,8 @@ Example: Finding the coefficients for a 200nm gold layer surrounded by air, usin
 '''
 #@njit(float32(float32,float32[:],complex64 [:],float32, int32))
 #def jreftran_rt(wavelength: int,d:float,n:complex64,t0:float,polarization: int)-> float:
-@jit
-def jreftran_rt(wavelength, d, n, t0, polarization):
+#@jit
+def jreftran_rt(wavelength, d, n, t0, polarization,M,M_t):
     # x = sind(np.array([0,90,180,359, 360]))
     Z0 = 376.730313     #impedance of free space, Ohms
     Y = n / Z0
@@ -53,7 +54,7 @@ def jreftran_rt(wavelength, d, n, t0, polarization):
         eta = Y / ct;      # tilted admittance, TM case
     delta = 1j * g * d * ct
     ld = d.shape[0]
-    M = np.zeros((2, 2, ld),dtype=complex)
+    #M = np.zeros((2, 2, ld),dtype=complex)
     for j in range(ld):
         a = delta[j]
         M[0, 0, j] = np.cos(a);
@@ -61,7 +62,7 @@ def jreftran_rt(wavelength, d, n, t0, polarization):
         M[1, 0, j] = 1j * eta[j] * np.sin(a);
         M[1, 1, j] = np.cos(a)
         # ("M(:,:,{})={}\n\n".format(j,M[:,:,j]))
-    M_t = np.identity(2,dtype=complex)        #toal charateristic matrix
+    #M_t = np.identity(2,dtype=complex)        #toal charateristic matrix
     for j in range(1,ld - 1):
         M_t = np.matmul(M_t,M[:,:, j])
     # s1 = '({0.real:.2f} + {0.imag:.2f}i)'.format(eta[0])
@@ -91,7 +92,41 @@ def jreftran_rt(wavelength, d, n, t0, polarization):
     A = A.real
     # return r,t,R,T,A,Y_tot,eta_one,fx,Re,Im
     return r, t, R, T, A
-    #return R
+
+@jit
+def jreftran_R(wavelength, d, n, t0, polarization,M,M_t):
+    # x = sind(np.array([0,90,180,359, 360]))
+    Z0 = 376.730313     #impedance of free space, Ohms
+    Y = n / Z0
+    g = 1j * 2 * np.pi * n / wavelength        #propagation constant in terms of free space wavelength and refractive index
+    t = (n[0] / n * sind(t0))
+    t2 = t*t        #python All arithmetic operates elementwise,Array multiplication is not matrix multiplication!!!
+    ct = np.sqrt(1 -t2);        # ct=sqrt(1-(n(1)./n*sin(t0)).^2); %cosine theta
+    if polarization == 0:       # tilted admittance(斜导纳)
+        eta = Y * ct;       # tilted admittance, TE case
+    else:
+        eta = Y / ct;      # tilted admittance, TM case
+    delta = 1j * g * d * ct
+    ld = d.shape[0]
+    #M = np.zeros((2, 2, ld),dtype=complex)
+    for j in range(ld):
+        a = delta[j]
+        M[0, 0, j] = np.cos(a);
+        M[0, 1, j] = 1j / eta[j] * np.sin(a);
+        M[1, 0, j] = 1j * eta[j] * np.sin(a);
+        M[1, 1, j] = np.cos(a)
+        # ("M(:,:,{})={}\n\n".format(j,M[:,:,j]))
+    #M_t = np.identity(2,dtype=complex)        #toal charateristic matrix
+    for j in range(1,ld - 1):
+        M_t = np.matmul(M_t,M[:,:, j])
+    e_1, e_2 = eta[0], eta[-1]
+    #m_1, m_2 = M_t[0, 0] + M_t[0, 1] * e_2, M_t[1, 0] + M_t[1, 1] * e_2
+    De = M_t[0, 0] + M_t[0, 1] * eta[-1]
+    Nu = M_t[1, 0] + M_t[1, 1] * eta[-1]
+    e_de_nu = e_1 * De + Nu
+    r = (e_1 * De - Nu) / e_de_nu;
+    R = abs(r) * abs(r)
+    return R
 
 if __name__ == '__main__':
     if True:    # Example: Finding the coefficients for a 200nm gold layer surrounded by air, using the Johnson and Christy data
