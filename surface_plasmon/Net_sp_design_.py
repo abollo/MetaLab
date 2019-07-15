@@ -73,7 +73,7 @@ if True:
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('-b', '--batch-size', default=32, type=int,
+    parser.add_argument('-b', '--batch-size', default=16, type=int,
                         metavar='N', help='mini-batch size (default: 32)')
     parser.add_argument('--lr', '--learning-rate', default=0.0001, type=float,
                         metavar='LR', help='initial learning rate')
@@ -218,7 +218,6 @@ def main():
     # Data loading code
     traindir = os.path.join(args.data, 'train/')
     valdir = os.path.join(args.data, 'test/')
-    valdir = 'G:/Beion/blood_cell/white/each_100/'
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])
     args.gpu_device = pytorch_env(42)
     print("====== Parameters ={}".format(args.__dict__))
@@ -259,7 +258,7 @@ def main():
 
         # evaluate on validation set
         acc1,_ = validate(vis_title,val_loader, model, criterion, epoch,args)
-        vis_plot(None, vis, epoch, acc1)
+        vis_plot(args, vis, epoch, acc1,"SPP_net")
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
@@ -286,7 +285,7 @@ def train(vis_title,train_loader, model, criterion, optimizer, epoch):
     for i, (input, target) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
-        plot_batch_grid(input,"G:/Beion/dump/{}".format(vis_title),"train",epoch,i)
+        plot_batch_grid(input,"./dump/{}".format(vis_title),"train",epoch,i)
 
         if args.gpu is not None:
             input = input.cuda(args.gpu, non_blocking=True)
@@ -332,13 +331,13 @@ def validate(vis_title,val_loader, model, criterion, epoch,opt,gbdt_features=Non
     # switch to evaluate mode
     model.eval()
     predicts=[]
-    nClass=len(opt['blood_cells'])
+    nClass=4
     accu_cls_=np.zeros(nClass)
     accu_cls_1 = np.zeros(nClass)
     with torch.no_grad():
         end = time.time()
         for i, (input, target) in enumerate(val_loader):
-            plot_batch_grid(input, "G:/Beion/dump/{}".format(vis_title), "valid", epoch, i)
+            plot_batch_grid(input, "./dump/{}".format(vis_title), "valid", epoch, i)
             if args.gpu is not None:
                 input = input.cuda(args.gpu, non_blocking=True)
             target = target.cuda(args.gpu, non_blocking=True)
@@ -374,7 +373,7 @@ def validate(vis_title,val_loader, model, criterion, epoch,opt,gbdt_features=Non
 
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
     for i in range(nClass):
-        cls=opt['blood_cells'][i]
+        cls=['au', 'ag', 'al', 'cu'][i]
         nz=(int)(accu_cls_[i])
         print("{}-{}-{:.3g}".format(cls,nz,accu_cls_1[i]/nz),end=" ")
     print("err=".format(0))

@@ -1,5 +1,7 @@
 import sys
-sys.path.append('E:/MetaLab/surface_plasmon/')
+import os
+ROOT_DIR = os.path.abspath("../")
+sys.path.append(ROOT_DIR)  # To find local version of the library
 
 from some_libs import *
 from jreftran_rt import *

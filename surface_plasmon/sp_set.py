@@ -1,3 +1,5 @@
+# python -m visdom.server
+
 import torch
 import os
 import random
@@ -15,6 +17,8 @@ from PIL import Image
 from PIL import ImageEnhance
 #from utils.visualize import *
 from utils.plot_tensor import *
+import re
+
 '''
     from albumentations import (
         HorizontalFlip, IAAPerspective, ShiftScaleRotate, CLAHE, RandomRotate90,
@@ -54,137 +58,6 @@ pd.set_option('display.max_rows', 500)
 pd.set_option('display.max_columns', 500)
 pd.set_option('display.width', 1000)
 
-class White_Normalize(object):
-    def __init__(self,hei,wth,rotate_alg,normal_alg="CLAE_r"):
-        self.hei = hei
-        self.wth = wth
-        self.T_crop = 0.3
-        self.rotate_alg = rotate_alg
-        self.isHisto = True
-        self.normal_alg = normal_alg
-        #self.crop_alg = crop_alg
-        print("====== White_Normalize hei={},wth={},rotate_alg={},normal_alg={}".format(hei,wth,rotate_alg,self.normal_alg))
-
-    def __call__(self,img):
-        #return self.contrast_pil(img,self.degree)
-        return self.normal_cv2(img)
-
-    def normal_cv2(self,img):
-        cv2_im = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-        h, w, channels = cv2_im.shape
-        if h!=self.hei or w!=self.wth:
-            cv2_im = cv2.resize(cv2_im, (self.hei, self.wth))
-        cv2_im = cell_normalize(cv2_im, "CLAE", self.rotate_alg)
-        h, w, channels = cv2_im.shape
-        gray = cv2.cvtColor(cv2_im, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        cl = clahe.apply(gray)
-        #kernel
-        kernel = gray[int(h * 0.2):int(h * 0.8), int(w * 0.2):int(w * 0.8)]
-        kernel = clahe.apply(kernel)
-        kernel = cv2.resize(kernel, (self.hei, self.wth))
-
-        channels = [gray, cl,kernel]
-        m_img = cv2.merge(channels)
-        pil_im = Image.fromarray(cv2.cvtColor(m_img, cv2.COLOR_BGR2RGB))
-        #pil_im.save('normal_0.jpg')
-        return pil_im
-
-class Red_Normalize(object):
-    def __init__(self,hei,wth,rotate_alg,crop_alg="random",normal_alg="CLAE_r"):
-        self.hei = hei
-        self.wth = wth
-        self.T_crop = 0.3
-        self.rotate_alg = rotate_alg
-        self.isHisto = True
-        self.normal_alg = normal_alg
-        print("====== Red_Normalize hei={},wth={},rotate_alg={},normal_alg={}".format(hei,wth,rotate_alg,self.normal_alg))
-
-    def __call__(self,img):
-        #return self.contrast_pil(img,self.degree)
-        return self.normal_cv2(img)
-
-    def Crop(self,img):
-        cv2_im = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-        h, w, channels = cv2_im.shape
-        zoom_0 = h * 1.0 / self.hei
-        if self.hei != h or self.wth != w:
-            assert zoom_0 > 1
-            zoom_0 = zoom_0 * 1.1
-            s = random.uniform(1.0 / zoom_0, 1)
-            h1, w1 = min(h, self.hei * s), min(w, self.wth * s)
-            h1, w1 = int(h1), int(w1)
-            y = h - h1;
-            x = w - w1
-            assert (y >= 0 and x >= 0)
-            y = y * random.uniform(0, 1);
-            x = x * random.uniform(0, 1)
-            x, y = int(x), int(y)
-            cv2_im = cv2_im[y:y + h1, x:x + w1]
-            cv2_im = cv2.resize(cv2_im, (self.hei, self.wth))
-
-    def circle_normalize(self,img):
-        h, w, channels = img.shape
-        r_0=min(h,w)*0.4
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 20,
-                                   param1=50, param2=30, minRadius=(int)(r_0*0.8), maxRadius=(int)(r_0*1))
-        circles = np.uint16(np.around(circles))
-        for i in circles[0, :]:
-            # draw the outer circle
-            cv2.circle(img, (i[0], i[1]), i[2], (0, 255, 0), 2)
-            # draw the center of the circle
-            cv2.circle(img, (i[0], i[1]), 2, (0, 0, 255), 3)
-
-        cv2.imshow('detected circles', img)
-        cv2.waitKey(0)
-        return img
-
-    def normal_cv2(self,img):
-        #img.save('normal_0.jpg')
-        cv2_im = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-        h, w, channels = cv2_im.shape
-        #cv2_im=self.circle_normalize(cv2_im)
-        #cv2_im = contour_normalize(cv2_im)
-        cv2_im = cell_normalize(cv2_im,"CLAE",self.rotate_alg)
-        if self.normal_alg=='CLAE_r_mix':
-            cv2_im = cell_expand(cv2_im)
-        pil_im = Image.fromarray(cv2.cvtColor(cv2_im, cv2.COLOR_BGR2RGB))
-        #pil_im.save('normal_1.jpg')
-        return pil_im
-
-class Contrast(object):
-    def __init__(self,degree):
-        self.degree = degree
-        self.isRotate = False
-        self.isHisto = True
-
-    def __call__(self,img):
-        #return self.contrast_pil(img,self.degree)
-        return self.contrast_cv2(img, self.degree)
-
-    def contrast_pil(self,img,degree):
-        #img.save('Contrast_0.jpg')
-        angle = random.random() * 360
-        if True:
-            img = img.rotate(angle)
-        else:
-            opencvImage = cv2.cvtColor(numpy.array(pil_image), cv2.COLOR_RGB2BGR)
-            center = tuple(np.array(img.shape[1::-1]) / 2)
-            rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
-            result = cv2.warpAffine(img, rot_mat, img.shape[1::-1], flags=cv2.INTER_LINEAR)
-        enh_contrast = ImageEnhance.Contrast(img)
-        enh_contrast.enhance(degree)
-        #img.save('Contrast_1.jpg')
-        return img
-
-    def contrast_cv2(self,img,degree):
-        #img.save('Contrast_0.jpg')
-        cv2_im = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-        cv2_im = cell_normalize(cv2_im)
-        pil_im = Image.fromarray(cv2.cvtColor(cv2_im, cv2.COLOR_BGR2RGB))
-        #pil_im.save('Contrast_1.jpg')
-        return pil_im
 
 def check_dir(dir_):
     if not os.path.exists(dir_):
@@ -200,31 +73,6 @@ def get_total_files(class_names, path=None):
     return sum_total
 
 
-def path2df_(root_path,  extensions,class_name=None,rTest=0.5, tile=False):
-    #check_dir(path + 'train_npz/')
-    #check_dir(path + 'test_npz/')
-    class_names = set()
-    folds = [x[0] for x in os.walk(root_path)]
-    if False:
-        total_load = get_total_files(class_names, path=path)
-        print(" ROOT@@@{}\tclass_names = {},total_files={}".format(path,class_names, total_load))
-        nb_classes = len(class_names)
-    tic_0 = time.time()
-    for fold in folds:
-        if fold==root_path:     continue
-        files = os.listdir(fold)
-        shuffle(files)
-        nz,nTrain = 0,len(files)*(1-rTest)
-        for file in files:
-            nz=nz+1
-            name, extension = os.path.splitext(file)
-            if extension not in extensions:            continue
-            tokens = name.split('_')
-            cls = tokens[0]
-            class_names.add(cls)
-
-    return class_names
-
 def list_dir(dir,extensions):
     files_0,files = os.listdir(dir),[]
     for file in files_0:
@@ -234,11 +82,31 @@ def list_dir(dir,extensions):
         files.append(file)
     return files
 
-class class_info:
-    def __init__(self, nam,id_=0):
-        self.name = nam
+dict_metal={
+    'au':0, 'ag':1, 'al':2, 'cu':3
+}
+class device_info:
+    #   '188nm [ag(6)_31_cu(9)_20_al(6)_26_cu(8)_31_au(6)_45_]_'
+    def __init__(self, info,path,id_=0):
+        self.path = path
+
+        info = info.replace('_', ' ').replace('(', ' ').replace(')', ' ').replace('[', ' ').replace(']', ' ')
+        #tokens = re.split(" _\'('\')'\'['\']'", info)
+        tokens = info.split( )
         self.ID = id_
-        self.items = []
+        self.metal_types = []       #only for some layers
+        self.thickness = []
+        nLayer = (int)((len(tokens)-1)/3)
+        for i in range(nLayer):
+            self.metal_types.append(tokens[3*i+1])
+            h1,h2=(float)(tokens[3 * i + 2]),(float)(tokens[3 * i + 3])
+            self.thickness.append(h1)
+            self.thickness.append(h2)
+
+    def label(self,x=0):
+        metal = self.metal_types[0]
+        type = dict_metal[metal]
+        return type
 
     def __repr__(self):
         return "class_info"
@@ -251,25 +119,20 @@ class class_info:
         nItem = len(self.items)
         return nItem
 
-class CELL_TRANS(object):
+class SPP_TRANS(object):
     def __init__(self,params,tte):
-        self.shape = params['input_shape']
+        self.params = params
+        self.shape = params.input_shape
         self.input_dim= self.shape[1]
         self.channel = self.shape[0]
         self.tte = tte
-        self.cell=params['cell_type']
-        self.params = params
+
         self.rotate_alg = "none"
         self.isHisto = True
-        self.normal_alg = params['normal']
+        self.normal_alg = params.normal
         normalize = TRANS.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
-        if self.cell=='white':
-            if self.tte != 'train':
-                self.rotate_alg = "none"            #"lift"
-            else:
-                self.rotate_alg = "random"          #"lift"
-        elif self.cell=='red':
+        if False:
             if self.tte != 'train':
                 self.rotate_alg = "none"
             else:
@@ -306,18 +169,10 @@ class CELL_TRANS(object):
         #cv2.fastNlMeansDenoising(cv2_im, cv2_im, 5);       #h 值高可以很好的去除噪声,但也会把图像的细节抹去
         #cv2_im = cv2.bilateralFilter(cv2_im, -11, 17, 17)
 
-        # cv2_im=self.circle_normalize(cv2_im)
-        # cv2_im = contour_normalize(cv2_im)
-        cv2_im = cell_normalize(cv2_im, "CLAE", self.rotate_alg)
-        #cv2.imwrite("fastNlMeansDenoising_2.jpg", cv2_im)
-        if True:  # self.normal_alg=='CLAE_r_mix':
-            cv2_im = cell_expand(cv2_im,self.shape)
-        #pil_im = Image.fromarray(cv2.cvtColor(cv2_im, cv2.COLOR_BGR2RGB))
-        #tensor = tvF.to_tensor(pil_im)
         tensor = tvF.to_tensor(cv2_im)
-        tensor = tvF.normalize(tensor, mean=[0.485, 0.456, 0.406, 0.406, 0.406, 0.406, 0.406, 0.406, 0.406],
-                               std=[0.229, 0.224, 0.225, 0.225, 0.225, 0.225, 0.225, 0.225, 0.225])
-        #plot_batch_grid(tensor,"G:/Beion/dump/{}".format('Red_TRANS_1'),"train",0,0)
+        tensor = tvF.normalize(tensor, mean=[0.485, 0.456, 0.406],
+                               std=[0.229, 0.224, 0.225])
+        #plot_batch_grid(tensor,"./dump/{}".format('Red_TRANS_1'),"train",0,0)
         return tensor
 
 
@@ -325,7 +180,7 @@ class surfae_plasmon_set(data.Dataset):
     def __init__(self, params,tte='train', user_trans=None ):
         self.random_pick = None
         self.classes = []
-        self.items = []
+        self.devices = []
 
         self.Y = []
         self.key_map = {}
@@ -333,82 +188,38 @@ class surfae_plasmon_set(data.Dataset):
         self.transform = user_trans
 
         normalize = TRANS.Normalize(mean = [0.485, 0.456, 0.406],std = [0.229, 0.224, 0.225])
-        #self.transforms=CELL_TRANS(params,self.tte)
+        self.transforms=SPP_TRANS(params,self.tte)
         return
 
     def AdaptiveSample(self,nMaxCls):
-        self.items=[]
-        nz0, nz1=1000000,0
-        rand_path=""
-        for cls in self.cls_infos:
-            nz = len(self.items)
-            if cls.nz()<=nMaxCls:
-                self.items.extend(cls.items)
-                if False:   #简单复制没啥用，令人吃惊       66.4%(EPOCH=3)  65.7%(EPOCH=4)
-                    nLoop = (int)(nMaxCls / len(cls.items))
-                    for i in range(nLoop-1):
-                        self.items.extend(cls.items)
-            else:
-                random.shuffle(cls.items)
-                if rand_path == "":
-                    rand_path = cls.items[0]
-                self.items.extend(cls.items[0:nMaxCls])
-            nz0 = min(nz0,len(self.items)-nz)
-            nz1 = max(nz1, len(self.items)-nz)
-
-            #print("\t{}\tname=\"{}\"\t\tnz={}".format(cls.ID,cls.name,cls.nz()))
-        print("AdaptiveSample ...nSample={} nz=[{}-{}] nMaxCls={} nCls={}".format(self.__len__(),nz0,nz1,nMaxCls,len(self.cls_infos)))
-        print("AdaptiveSample ...rand_path={}".format(rand_path))
+        pass
 
     def scan_folders(self, root_path, params, adptive=False,pkl_path=None):
-        self.root = root_path    #'F:/AudioSet/audioData-gc/'
+        self.root = root_path
         self.pkl_path = pkl_path
-        return
-        # self.params = params
-        # self.classes = classes
+
         nAllItem=0
-        id,self.cls_infos= 0,[]
-        for pose in  params['blood_cells']:
-            self.cls_infos.append( class_info(pose, id) )
-            id = id+1
+        id,self.devices= 0,[]
         extensions=['.jpg']
-        nz,nMinFile,nMaxFile = 0,0 ,params['nMostCls']
-        folds = [x[0] for x in os.walk(root_path)]
-        if False:
-            total_load = get_total_files(class_names, path=path)
-            print(" ROOT@@@{}\tclass_names = {},total_files={}".format(path, class_names, total_load))
-            nb_classes = len(class_names)
-        tic_0 = time.time()
-        for fold in folds:
-            if fold == root_path:     continue
-            tokens = fold.split('/')
-            cls = None
-            for cls_info in self.cls_infos:
-                if tokens[-1] == cls_info.name:
-                    cls = cls_info
-                    break
-            if cls is None:
-                print("\r{} is not in ANY CLASS!!!".format(fold + '/' + file), end="")
+        nz,nMinFile,nMaxFile = 0,0 ,params.nMostCls
+        files = os.listdir(self.root)
+        for file in files:
+            nz = nz + 1
+            name, extension = os.path.splitext(file)
+            if extension not in extensions:            continue
+            try:
+                device = device_info(name,f"{self.root}/{file}")
+            except:
+                print(f"Failed to load device@{self.root}/{file}")
                 continue
-            files = os.listdir(fold)
-            for file in files:
-                nz = nz + 1
-                name, extension = os.path.splitext(file)
-                if extension not in extensions:            continue
-                cls.items.append([fold + '/' + file, cls.ID])
-                if not adptive:
-                    self.items.append([fold+'/'+file, cls.ID])
-                if cls.nz() > nMaxFile:
-                    break
-            nAllItem = nAllItem+cls.nz()
+            self.devices.append(device)
+            if len(self.devices) > nMaxFile:
+                break
+        #nAllItem = nAllItem+cls.nz()
 
         self.tLoad = 0
-        info = "".join([str(x) for x in self.cls_infos] )
-        print( "====== scan_folders@ \"{}\" nAllItem={} self.items={}\n class_info=\n".format(self.root,nAllItem,self.__len__()) )
-        for cls in self.cls_infos:
-            print("\t{}\tname=\"{}\"\t\tnz={}".format(cls.ID,cls.name,cls.nz()))
-        # self.scaler_(X_)
-        # print("======ROOT={} CLASS={} N={}\tY_={}".format(root, self.class_names, self.nItem, self.Y_.shape))
+        print( "====== scan_folders@ \"{}\" nItem={}\n ".format(self.root,self.__len__()) )
+
 
     def gen_rand(self,seed):
         random.seed(seed)
@@ -455,21 +266,19 @@ class surfae_plasmon_set(data.Dataset):
         nItem=self.__len__()
         assert self.random_pick is None or len(self.random_pick)==nItem
         assert (index >= 0 and index < nItem)
-        item = self.items[index]
-        img_path,img_label = item[0],item[1]
+        device = self.devices[index]
+        img_path,img_label = device.path,device.label()
         data = Image.open(img_path)
         data = self.transforms(data)
         return data, img_label
         #return tX_, tY_
 
     def __len__(self):
-        nItem = len(self.items)
+        nItem = len(self.devices)
         return nItem
 
 
 
 if __name__ == '__main__':
-    if True:    #更专业的https://github.com/gveres/donateacry-corpus
-        path = "D:\VideoP\ObjectTracking\BrushPose"
-        classes = path2df_(path,['.jpg'],['Front','Top']  )
+    pass
 
