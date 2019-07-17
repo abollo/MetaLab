@@ -19,17 +19,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 from utils.plot_tensor import *
 from sp_set import surfae_plasmon_set
+from spp_net import *
 import visdom
 import sys
 from utils.visualize import *
 from utils.pytorch_env import *
 import pickle
+import subprocess
 
 if False:
     import torchvision.models as models
 else:
     import cadene_detector.cadene_models as models
 
+#print(subprocess.check_output(['python -m visdom.server']))
 [   'alexnet', 'densenet121', 'densenet161', 'densenet169', 'densenet201',
     'inception_v3', 'resnet101', 'resnet152', 'resnet18', 'resnet34', 'resnet50',
      'squeezenet1_0', 'squeezenet1_1',
@@ -52,8 +55,8 @@ model_names=['alexnet', 'bninception', 'cafferesnet101', 'densenet121', 'densene
 #model_name='se_resnet50'
 #model_name='vgg16_bn'
 #model_name='vgg11_bn'
-model_name='dpn68'      #learning rate=0.0001 效果较好
-#model_name='cys_dpn'
+#model_name='dpn68'      #learning rate=0.0001 效果较好
+model_name='cys_dpn'
 #model_name='dpn92'
 #model_name='senet154'
 #model_name='densenet121'
@@ -141,9 +144,10 @@ def GetGBDT_featrues(model_path,model,vis_title, train_loader,val_loader, criter
 def main():
     global args, best_acc1
     args = parser.parse_args()
-    args.nMostCls = 5000
+    args.nMostCls = 500
     args.input_shape = [3, 224, 224]
     args.normal = 'gray_2_{}'.format(args.input_shape)
+    nClass=4
     if args.seed is not None:
         random.seed(args.seed)
         torch.manual_seed(args.seed)
@@ -169,11 +173,11 @@ def main():
             args.pretrained=False
             print("=> creating model '{}'".format(args.arch))
             model = models.__dict__[args.arch](num_classes=nClass,input_shape=args.input_shape,pretrained='')
+            model = SPP_Model(args)
             args.lr = 0.0005
     # create model
     elif args.pretrained:
         args.lr = 0.0001
-        print("=> using pre-trained model '{}'".format(args.arch))
         model = models.__dict__[args.arch](pretrained=True)
     else:
         print("=> creating model '{}'".format(args.arch))
@@ -296,7 +300,7 @@ def train(vis_title,train_loader, model, criterion, optimizer, epoch):
         loss = criterion(output, target)
 
         # measure accuracy and record loss
-        [acc1, acc2],_ = accuracy(output, target, topk=(1, 2))
+        [acc1, acc2],_ = accuracy(output, target, topk=(1, 1))
         losses.update(loss.item(), input.size(0))
         top1.update(acc1[0], input.size(0))
         top5.update(acc2[0], input.size(0))
@@ -347,7 +351,7 @@ def validate(vis_title,val_loader, model, criterion, epoch,opt,gbdt_features=Non
             loss = criterion(output, target)
 
             # measure accuracy and record loss
-            [acc1, acc5],pred = accuracy(output, target, topk=(1, 5))
+            [acc1, acc5],pred = accuracy(output, target, topk=(1, 1))
             if True:        #each class by cys
                 for i in range(len(pred)):
                     cls = target[i]
