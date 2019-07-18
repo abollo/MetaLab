@@ -103,10 +103,12 @@ class device_info:
             self.thickness.append(h1)
             self.thickness.append(h2)
 
-    def label(self,x=0):
-        metal = self.metal_types[0]
-        type = dict_metal[metal]
-        return type
+    def metal_labels(self,x=0):
+        labels=[]
+        for metal in self.metal_types:
+            type = dict_metal[metal]
+            labels.append(type)
+        return labels
 
     def __repr__(self):
         return "class_info"
@@ -139,7 +141,7 @@ class SPP_TRANS(object):
                 self.rotate_alg = "random"
 
 
-        print("====== Red_TRANS input_dim={}".format(self.input_dim))
+        print("====== SPP_TRANS input_dim={}".format(self.input_dim))
     def Crop(self,img):
         cv2_im = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         h, w, channels = cv2_im.shape
@@ -267,10 +269,13 @@ class surfae_plasmon_set(data.Dataset):
         assert self.random_pick is None or len(self.random_pick)==nItem
         assert (index >= 0 and index < nItem)
         device = self.devices[index]
-        img_path,img_label = device.path,device.label()
+        img_path,metal_labels = device.path,device.metal_labels()
         data = Image.open(img_path)
         data = self.transforms(data)
-        return data, img_label
+        metal_labels = metal_labels[0]
+        #metal_labels = np.asarray(metal_labels).astype(np.int64)
+        thickness = np.asarray(device.thickness).astype(np.float32)
+        return data, metal_labels,thickness
         #return tX_, tY_
 
     def __len__(self):

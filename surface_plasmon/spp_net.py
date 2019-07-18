@@ -31,31 +31,44 @@ def image_transformer():
 
 # from layer_utils.roi_align.roi_align import CropAndResizeFunction
 
-"""
-0 ResNet(
-  0 (conv1): Conv2d(3, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-  1(bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True)
-  2 (relu): ReLU(inplace)
-  3 (maxpool): MaxPool2d(kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), dilation=(1, 1), ceil_mode=False)
-  4 (stack1): Sequential 
-  5 (stack2): Sequential 
-  6 (stack3): Sequential 
-  7 (stack4): Sequential 
-  8 (avgpool): AvgPool2d(kernel_size=7, stride=1, padding=0, ceil_mode=False, count_include_pad=True)
-  9 (fc): Linear(in_features=2048, out_features=2000, bias=True)
-)
-1 Linear(in_features=2048, out_features=512, bias=True)
-2 Linear(in_features=512, out_features=99, bias=True)
-3 Linear(in_features=2048, out_features=512, bias=True)
-4 Linear(in_features=512, out_features=2, bias=True)
-"""
 
 class SPP_Model(torch.nn.Module, ):
+  def pick_models(self):
+    model_names = sorted(name for name in models.__dict__
+                         if name.islower() and not name.startswith("__")
+                         and callable(models.__dict__[name]))
+    print(model_names)
+    # pretrainedmodels   https://data.lip6.fr/cadene/pretrainedmodels/
+    model_names = ['alexnet', 'bninception', 'cafferesnet101', 'densenet121', 'densenet161', 'densenet169',
+                   'densenet201',
+                   'dpn107', 'dpn131', 'dpn68', 'dpn68b', 'dpn92', 'dpn98', 'fbresnet152',
+                   'inceptionresnetv2', 'inceptionv3', 'inceptionv4', 'nasnetalarge', 'nasnetamobile', 'pnasnet5large',
+                   'polynet',
+                   'resnet101', 'resnet152', 'resnet18', 'resnet34', 'resnet50', 'resnext101_32x4d', 'resnext101_64x4d',
+                   'se_resnet101', 'se_resnet152', 'se_resnet50', 'se_resnext101_32x4d', 'se_resnext50_32x4d',
+                   'senet154', 'squeezenet1_0', 'squeezenet1_1',
+                   'vgg11', 'vgg11_bn', 'vgg13', 'vgg13_bn', 'vgg16', 'vgg16_bn', 'vgg19', 'vgg19_bn', 'xception']
+
+    # model_name='cafferesnet101'
+    # model_name='resnet101'
+    # model_name='se_resnet50'
+    # model_name='vgg16_bn'
+    # model_name='vgg11_bn'
+    # model_name='dpn68'      #learning rate=0.0001 效果较好
+    self.back_bone = 'resnet18'
+    # model_name='dpn92'
+    # model_name='senet154'
+    # model_name='densenet121'
+    # model_name='alexnet'
+    # model_name='senet154'
+
   def __init__(self,config):
     super(SPP_Model, self).__init__()
-    self.config = config
-    self.resNet = models.resnet18(pretrained=True)
 
+    self.config = config
+    self.pick_models()
+    self.resNet = models.resnet18(pretrained=True)
+    print(f"=> creating model '{self.back_bone}'")
     self.use_gpu = torch.cuda.is_available()
     self.nLayer = 10
     self.nMetalType = 4

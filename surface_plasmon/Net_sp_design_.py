@@ -33,43 +33,12 @@ else:
     import cadene_detector.cadene_models as models
 
 #print(subprocess.check_output(['python -m visdom.server']))
-[   'alexnet', 'densenet121', 'densenet161', 'densenet169', 'densenet201',
-    'inception_v3', 'resnet101', 'resnet152', 'resnet18', 'resnet34', 'resnet50',
-     'squeezenet1_0', 'squeezenet1_1',
-     'vgg11', 'vgg11_bn', 'vgg13', 'vgg13_bn', 'vgg16', 'vgg16_bn', 'vgg19', 'vgg19_bn']
-#print(models.__dict__)
-model_names = sorted(name for name in models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
-print(model_names)
-#pretrainedmodels   https://data.lip6.fr/cadene/pretrainedmodels/
-model_names=['alexnet', 'bninception', 'cafferesnet101', 'densenet121', 'densenet161', 'densenet169', 'densenet201',
-             'dpn107', 'dpn131', 'dpn68', 'dpn68b', 'dpn92', 'dpn98', 'fbresnet152',
-             'inceptionresnetv2', 'inceptionv3', 'inceptionv4', 'nasnetalarge', 'nasnetamobile', 'pnasnet5large', 'polynet',
-             'resnet101', 'resnet152', 'resnet18','resnet34', 'resnet50', 'resnext101_32x4d', 'resnext101_64x4d',
-             'se_resnet101', 'se_resnet152', 'se_resnet50', 'se_resnext101_32x4d', 'se_resnext50_32x4d', 'senet154', 'squeezenet1_0', 'squeezenet1_1',
-             'vgg11', 'vgg11_bn', 'vgg13', 'vgg13_bn', 'vgg16', 'vgg16_bn', 'vgg19', 'vgg19_bn', 'xception']
 
-#model_name='cafferesnet101'
-#model_name='resnet101'
-#model_name='se_resnet50'
-#model_name='vgg16_bn'
-#model_name='vgg11_bn'
-#model_name='dpn68'      #learning rate=0.0001 效果较好
-model_name='cys_dpn'
-#model_name='dpn92'
-#model_name='senet154'
-#model_name='densenet121'
-#model_name='alexnet'
-#model_name='senet154'
+
 if True:
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
     parser.add_argument('data', metavar='DIR',help='path to dataset')
-    parser.add_argument('--arch', '-a', metavar='ARCH', default=model_name,
-                        choices=model_names,
-                        help='model architecture: ' +
-                            ' | '.join(model_names) +
-                            ' (default: resnet34)')
+    #parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18', help='model architecture: ' +' | '.join(model_names) + ' (default: resnet34)')
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
     parser.add_argument('--epochs', default=1000, type=int, metavar='N',
@@ -168,34 +137,23 @@ def main():
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size)
     args.pretrained = True
-    if args.arch.startswith('cys'):
-        if args.arch=='cys_dpn':
-            args.pretrained=False
-            print("=> creating model '{}'".format(args.arch))
-            model = models.__dict__[args.arch](num_classes=nClass,input_shape=args.input_shape,pretrained='')
-            model = SPP_Model(args)
-            args.lr = 0.0005
-    # create model
-    elif args.pretrained:
-        args.lr = 0.0001
-        model = models.__dict__[args.arch](pretrained=True)
-    else:
-        print("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch]()
+
+    model = SPP_Model(args)
+    args.lr = 0.0005
 
     args.gpu = 0
+    args.thickness_criterion = nn.L1Loss()
+    args.metal_criterion = nn.CrossEntropyLoss()
     if args.gpu is not None:
         model = model.cuda(args.gpu)
+        args.thickness_criterion = args.thickness_criterion.cuda()
+        args.metal_criterion = args.metal_criterion.cuda()
     elif args.distributed:
         model.cuda()
         model = torch.nn.parallel.DistributedDataParallel(model)
     else:
-        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
-        else:
-            model = torch.nn.DataParallel(model).cuda()
-    print(model)
+        model = torch.nn.DataParallel(model).cuda()
+    print(f"{model}\nthickness_criterion={args.thickness_criterion}\nmetal_criterion={args.metal_criterion}")
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -240,7 +198,7 @@ def main():
     if args.evaluate:
         validate(val_loader, model, criterion,args)
         return
-
+    model_name = model.back_bone
     vis_title = "{}[{}]_most={}_lr={}".format(model_name,args.normal,args.nMostCls,args.lr)
     vis = visdom.Visdom(env=vis_title)
     if False:
@@ -258,7 +216,7 @@ def main():
         # train for one epoch
         train_dataset.AdaptiveSample(args.nMostCls)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,num_workers=args.workers)
-        train(vis_title,train_loader, model, criterion, optimizer, epoch)
+        train_core(args,vis_title,train_loader, model, optimizer, epoch)
 
         # evaluate on validation set
         acc1,_ = validate(vis_title,val_loader, model, criterion, epoch,args)
@@ -268,14 +226,14 @@ def main():
         best_acc1 = max(acc1, best_acc1)
         save_checkpoint({
             'epoch': epoch + 1,
-            'arch': args.arch,
+            'arch': model.back_bone,
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
             'optimizer' : optimizer.state_dict(),
         }, is_best)
 
 
-def train(vis_title,train_loader, model, criterion, optimizer, epoch):
+def train_core(args,vis_title,train_loader, model, optimizer, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -286,21 +244,32 @@ def train(vis_title,train_loader, model, criterion, optimizer, epoch):
     model.train()
 
     end = time.time()
-    for i, (input, target) in enumerate(train_loader):
+    for i, (input, metal_true,thickness_true) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
         plot_batch_grid(input,"./dump/{}".format(vis_title),"train",epoch,i)
 
         if args.gpu is not None:
             input = input.cuda(args.gpu, non_blocking=True)
-        target = target.cuda(args.gpu, non_blocking=True)
+        metal_true = metal_true.cuda(args.gpu, non_blocking=True)
+        thickness_true = thickness_true.cuda(args.gpu, non_blocking=True)
 
         # compute output
-        output = model(input)
-        loss = criterion(output, target)
+        thickness, metal_out = model(input)
+        _, metal_max = torch.max(metal_out, 1)
+        _, thickness_max = torch.max(thickness, 1)
+        #gender_true = gender_true.view(-1)
+        #age_cls_true = age_cls_true.view(-1, self.age_cls_unit)
+
+        # 4.1.2.5 get the loss
+        metal_loss = args.metal_criterion(metal_out, metal_true)
+        thickness_loss = args.thickness_criterion(thickness, thickness_true)
+        alpha=0.5
+        loss = metal_loss*alpha+thickness_loss*(1-alpha)
+        #loss = criterion(output, target)
 
         # measure accuracy and record loss
-        [acc1, acc2],_ = accuracy(output, target, topk=(1, 1))
+        [acc1, acc2],_ = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
         losses.update(loss.item(), input.size(0))
         top1.update(acc1[0], input.size(0))
         top5.update(acc2[0], input.size(0))
@@ -340,19 +309,23 @@ def validate(vis_title,val_loader, model, criterion, epoch,opt,gbdt_features=Non
     accu_cls_1 = np.zeros(nClass)
     with torch.no_grad():
         end = time.time()
-        for i, (input, target) in enumerate(val_loader):
+        for i, (input, metal_true,thickness_true) in enumerate(val_loader):
             plot_batch_grid(input, "./dump/{}".format(vis_title), "valid", epoch, i)
             if args.gpu is not None:
                 input = input.cuda(args.gpu, non_blocking=True)
-            target = target.cuda(args.gpu, non_blocking=True)
+                metal_true = metal_true.cuda(args.gpu, non_blocking=True)
+                thickness_true = thickness_true.cuda(args.gpu, non_blocking=True)
 
             # compute output
-            output = model(input)
-            loss = criterion(output, target)
+            thickness, metal_out = model(input)
+            metal_loss = args.metal_criterion(metal_out, metal_true)
+            thickness_loss = args.thickness_criterion(thickness, thickness_true)
+            alpha = 0.5
+            loss = metal_loss * alpha + thickness_loss * (1 - alpha)
 
             # measure accuracy and record loss
-            [acc1, acc5],pred = accuracy(output, target, topk=(1, 1))
-            if True:        #each class by cys
+            [acc1, acc5],pred = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
+            if False:        #each class by cys
                 for i in range(len(pred)):
                     cls = target[i]
                     accu_cls_[cls]=accu_cls_[cls]+1
@@ -415,17 +388,17 @@ def adjust_learning_rate(optimizer, epoch):
         param_group['lr'] = lr
 
 
-def accuracy(output, target, topk=(1,)):
+def accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     p1 = None
     with torch.no_grad():
         maxk = max(topk)
-        batch_size = target.size(0)
+        batch_size = metal_true.size(0)
     #topk   A namedtuple of (values, indices) is returned, where the indices are the indices of the elements in the original input tensor.
-        _, pred = output.topk(maxk, 1, True, True)
+        _, pred = metal_out.topk(maxk, 1, True, True)
         pred = pred.t()
-        t1 = target.view(1, -1).expand_as(pred)
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
+        t1 = metal_true.view(1, -1).expand_as(pred)
+        correct = pred.eq(metal_true.view(1, -1).expand_as(pred))
 
         res = []
         for k in topk:
@@ -433,8 +406,8 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
 
         if True:    #each class accuracy by cys     5_1_2019
-            _, pred_1 = output.topk(1, 1, True, True)
-            p1,t1=pred_1.t().cpu().numpy().squeeze(),target.cpu().numpy()
+            _, pred_1 = metal_out.topk(1, 1, True, True)
+            p1,t1=pred_1.t().cpu().numpy().squeeze(),metal_true.cpu().numpy()
             assert(p1.shape==t1.shape)
         return res,p1
 
