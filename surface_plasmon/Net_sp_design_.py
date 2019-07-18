@@ -92,14 +92,14 @@ def GetGBDT_featrues(model_path,model,vis_title, train_loader,val_loader, criter
     #optimizer.load_state_dict(checkpoint['optimizer'])
     print("=> loaded checkpoint '{}' (epoch {})".format(args.resume, checkpoint['epoch']))
     model.gbdt_features = []
-    acc_test,predicts = validate(vis_title, val_loader, model, criterion, 0,opt)
+    acc_test,predicts = validate(vis_title, val_loader, model,  0,opt)
     assert (acc_test == best_acc1)
     testX = np.concatenate(model.gbdt_features)
     testY = GetTarget(val_loader)
     #assert(len(predicts)==len(list(testY)))
 
     model.gbdt_features = []
-    acc_train,_= validate(vis_title, train_loader, model, criterion, 0,opt)
+    acc_train,_= validate(vis_title, train_loader, model,  0,opt)
     trainX = np.concatenate(model.gbdt_features)
     trainY = GetTarget(train_loader)
 
@@ -113,9 +113,10 @@ def GetGBDT_featrues(model_path,model,vis_title, train_loader,val_loader, criter
 def main():
     global args, best_acc1
     args = parser.parse_args()
-    args.nMostCls = 500
+    args.nMostCls = 5000
+    args.hybrid_metal = 0
     args.input_shape = [3, 224, 224]
-    args.normal = 'gray_2_{}'.format(args.input_shape)
+
     nClass=4
     if args.seed is not None:
         random.seed(args.seed)
@@ -139,11 +140,15 @@ def main():
     args.pretrained = True
 
     model = SPP_Model(args)
-    args.lr = 0.0005
+    args.lr = 0.0001
+    #args.lr = 0.01
 
     args.gpu = 0
+    #args.thickness_criterion = nn.MSELoss()
     args.thickness_criterion = nn.L1Loss()
+    args.thickness_criterion = nn.SmoothL1Loss()
     args.metal_criterion = nn.CrossEntropyLoss()
+
     if args.gpu is not None:
         model = model.cuda(args.gpu)
         args.thickness_criterion = args.thickness_criterion.cuda()
@@ -156,12 +161,11 @@ def main():
     print(f"{model}\nthickness_criterion={args.thickness_criterion}\nmetal_criterion={args.metal_criterion}")
 
     # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss().cuda(args.gpu)
+    #criterion = nn.CrossEntropyLoss().cuda(args.gpu)
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
-
+    #optimizer = torch.optim.SGD(model.parameters(), args.lr,momentum=args.momentum,weight_decay=args.weight_decay)
+    optimizer = torch.optim.Adam(model.parameters(), args.lr,weight_decay=args.weight_decay)
+    args.normal = 'Huber_Adam'
     # optionally resume from a checkpoint
     if args.resume:
         if os.path.isfile(args.resume):
@@ -196,7 +200,7 @@ def main():
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
-        validate(val_loader, model, criterion,args)
+        validate(val_loader, model, args)
         return
     model_name = model.back_bone
     vis_title = "{}[{}]_most={}_lr={}".format(model_name,args.normal,args.nMostCls,args.lr)
@@ -219,7 +223,7 @@ def main():
         train_core(args,vis_title,train_loader, model, optimizer, epoch)
 
         # evaluate on validation set
-        acc1,_ = validate(vis_title,val_loader, model, criterion, epoch,args)
+        acc1,_ = validate(vis_title,val_loader, model, epoch,args)
         vis_plot(args, vis, epoch, acc1,"SPP_net")
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -256,23 +260,23 @@ def train_core(args,vis_title,train_loader, model, optimizer, epoch):
 
         # compute output
         thickness, metal_out = model(input)
-        _, metal_max = torch.max(metal_out, 1)
-        _, thickness_max = torch.max(thickness, 1)
-        #gender_true = gender_true.view(-1)
-        #age_cls_true = age_cls_true.view(-1, self.age_cls_unit)
+        if False:
+            _, metal_max = torch.max(metal_out, 1)
+            _, thickness_max = torch.max(thickness, 1)
 
-        # 4.1.2.5 get the loss
-        metal_loss = args.metal_criterion(metal_out, metal_true)
         thickness_loss = args.thickness_criterion(thickness, thickness_true)
-        alpha=0.5
-        loss = metal_loss*alpha+thickness_loss*(1-alpha)
+        if args.hybrid_metal>0:
+            metal_loss = args.metal_criterion(metal_out, metal_true)
+            loss = metal_loss * args.hybrid_metal + thickness_loss * (1 - args.hybrid_metal)
+        else:
+            loss =thickness_loss
         #loss = criterion(output, target)
 
         # measure accuracy and record loss
-        [acc1, acc2],_ = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
+        acc_thick,acc_metal = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
         losses.update(loss.item(), input.size(0))
-        top1.update(acc1[0], input.size(0))
-        top5.update(acc2[0], input.size(0))
+        top1.update(acc_thick, input.size(0))
+        top5.update(acc_metal, input.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -295,7 +299,7 @@ def train_core(args,vis_title,train_loader, model, optimizer, epoch):
 
 
 
-def validate(vis_title,val_loader, model, criterion, epoch,opt,gbdt_features=None):
+def validate(vis_title,val_loader, model, epoch,opt,gbdt_features=None):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -318,13 +322,14 @@ def validate(vis_title,val_loader, model, criterion, epoch,opt,gbdt_features=Non
 
             # compute output
             thickness, metal_out = model(input)
-            metal_loss = args.metal_criterion(metal_out, metal_true)
             thickness_loss = args.thickness_criterion(thickness, thickness_true)
-            alpha = 0.5
-            loss = metal_loss * alpha + thickness_loss * (1 - alpha)
-
+            if args.hybrid_metal > 0:
+                metal_loss = args.metal_criterion(metal_out, metal_true)
+                loss = metal_loss * args.hybrid_metal + thickness_loss * (1 - args.hybrid_metal)
+            else:
+                loss = thickness_loss
             # measure accuracy and record loss
-            [acc1, acc5],pred = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
+            acc_thick, acc_metal = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
             if False:        #each class by cys
                 for i in range(len(pred)):
                     cls = target[i]
@@ -332,8 +337,8 @@ def validate(vis_title,val_loader, model, criterion, epoch,opt,gbdt_features=Non
                     if(pred[i]==cls):
                         accu_cls_1[cls] = accu_cls_1[cls] + 1
             losses.update(loss.item(), input.size(0))
-            top1.update(acc1[0], input.size(0))
-            top5.update(acc5[0], input.size(0))
+            top1.update(acc_thick, input.size(0))
+            top5.update(acc_metal, input.size(0))
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -352,7 +357,7 @@ def validate(vis_title,val_loader, model, criterion, epoch,opt,gbdt_features=Non
     for i in range(nClass):
         cls=['au', 'ag', 'al', 'cu'][i]
         nz=(int)(accu_cls_[i])
-        print("{}-{}-{:.3g}".format(cls,nz,accu_cls_1[i]/nz),end=" ")
+        #print("{}-{}-{:.3g}".format(cls,nz,accu_cls_1[i]/nz),end=" ")
     print("err=".format(0))
     return top1.avg,predicts
 
@@ -388,28 +393,37 @@ def adjust_learning_rate(optimizer, epoch):
         param_group['lr'] = lr
 
 
-def accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1,)):
+def accuracy(metal_out, metal_true,thickness_out, thickness_true, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     p1 = None
     with torch.no_grad():
         maxk = max(topk)
         batch_size = metal_true.size(0)
-    #topk   A namedtuple of (values, indices) is returned, where the indices are the indices of the elements in the original input tensor.
-        _, pred = metal_out.topk(maxk, 1, True, True)
-        pred = pred.t()
-        t1 = metal_true.view(1, -1).expand_as(pred)
-        correct = pred.eq(metal_true.view(1, -1).expand_as(pred))
+        thickness = thickness_out.cpu().data.numpy()
+        thickness_true = thickness_true.cpu().data.numpy()
+        thickness_accu = np.mean(np.abs(thickness - thickness_true))
 
-        res = []
-        for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-            res.append(correct_k.mul_(100.0 / batch_size))
+        if metal_out is None:
+            metal_accu=0
+        else:
+        #topk   A namedtuple of (values, indices) is returned, where the indices are the indices of the elements in the original input tensor.
+            _, pred = metal_out.topk(maxk, 1, True, True)
+            pred = pred.t()
+            t1 = metal_true.view(1, -1).expand_as(pred)
+            correct = pred.eq(metal_true.view(1, -1).expand_as(pred))
 
-        if True:    #each class accuracy by cys     5_1_2019
-            _, pred_1 = metal_out.topk(1, 1, True, True)
-            p1,t1=pred_1.t().cpu().numpy().squeeze(),metal_true.cpu().numpy()
-            assert(p1.shape==t1.shape)
-        return res,p1
+            res = []
+            for k in topk:
+                correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+                res.append(correct_k.mul_(100.0 / batch_size))
+
+            if True:    #each class accuracy by cys     5_1_2019
+                _, pred_1 = metal_out.topk(1, 1, True, True)
+                p1,t1=pred_1.t().cpu().numpy().squeeze(),metal_true.cpu().numpy()
+                assert(p1.shape==t1.shape)
+            metal_accu = res[0].cpu().numpy().squeeze()
+        return thickness_accu,metal_accu
+        #return res,p1
 
 
 if __name__ == '__main__':
