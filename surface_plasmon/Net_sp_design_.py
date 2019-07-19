@@ -18,12 +18,13 @@ import torchvision.datasets as datasets
 import numpy as np
 import matplotlib.pyplot as plt
 from utils.plot_tensor import *
+from Torch_config import *
 from sp_set import surfae_plasmon_set
 from spp_net import *
 import visdom
 import sys
 from utils.visualize import *
-from utils.pytorch_env import *
+
 import pickle
 import subprocess
 
@@ -72,7 +73,6 @@ if True:
     parser.add_argument('--gpu', default=None, type=int,
                         help='GPU id to use.')
     print(parser)
-best_acc1 = 0
 
 def GetTarget(dat_loader):
     target_list=[]
@@ -110,256 +110,215 @@ def GetGBDT_featrues(model_path,model,vis_title, train_loader,val_loader, criter
 
     return acc_test
 
-def main():
-    global args, best_acc1
-    args = parser.parse_args()
-    args.nMostCls = 5000
-    args.hybrid_metal = 0
-    args.input_shape = [3, 224, 224]
+class SPP_Torch(object):
+    """ SPP by torch """
 
-    nClass=4
-    if args.seed is not None:
-        random.seed(args.seed)
-        torch.manual_seed(args.seed)
-        cudnn.deterministic = True
-        warnings.warn('You have chosen to seed training. '
-                      'This will turn on the CUDNN deterministic setting, '
-                      'which can slow down your training considerably! '
-                      'You may see unexpected behavior when restarting '
-                      'from checkpoints.')
+    def __init__(self, config,module):
+        self.config = config
+        self.model = module
+        self.config.normal = "normal"
 
-    if args.gpu is not None:
-        warnings.warn('You have chosen a specific GPU. This will completely '
-                      'disable data parallelism.')
-
-    args.distributed = args.world_size > 1
-
-    if args.distributed:
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=args.world_size)
-    args.pretrained = True
-
-    model = SPP_Model(args)
-    args.lr = 0.0001
-    #args.lr = 0.01
-
-    args.gpu = 0
-    #args.thickness_criterion = nn.MSELoss()
-    args.thickness_criterion = nn.L1Loss()
-    args.thickness_criterion = nn.SmoothL1Loss()
-    args.metal_criterion = nn.CrossEntropyLoss()
-
-    if args.gpu is not None:
-        model = model.cuda(args.gpu)
-        args.thickness_criterion = args.thickness_criterion.cuda()
-        args.metal_criterion = args.metal_criterion.cuda()
-    elif args.distributed:
-        model.cuda()
-        model = torch.nn.parallel.DistributedDataParallel(model)
-    else:
-        model = torch.nn.DataParallel(model).cuda()
-    print(f"{model}\nthickness_criterion={args.thickness_criterion}\nmetal_criterion={args.metal_criterion}")
-
-    # define loss function (criterion) and optimizer
-    #criterion = nn.CrossEntropyLoss().cuda(args.gpu)
-
-    #optimizer = torch.optim.SGD(model.parameters(), args.lr,momentum=args.momentum,weight_decay=args.weight_decay)
-    optimizer = torch.optim.Adam(model.parameters(), args.lr,weight_decay=args.weight_decay)
-    args.normal = 'Huber_Adam'
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            best_acc1 = checkpoint['best_acc1']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})".format(args.resume, checkpoint['epoch']))
+        self.best_acc1 = 0
+        print(f"====== Parameters ={config.__dict__}\n")
+        self.LoadData()
+        pass
+    
+    def LoadData(self):
+        """ Data loading code   """
+        traindir = os.path.join(self.config.data, 'train/')
+        valdir = os.path.join(self.config.data, 'test/')
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    
+        self.train_dataset, val_dataset = surfae_plasmon_set(self.config, tte='train'), surfae_plasmon_set(self.config, tte='eval')
+        # train_data.scan_folders('F:/AudioSet/train_npz/',classes, opt, opt.pkl_path + ".train", train=True)
+        self.train_dataset.scan_folders(traindir, self.config, adptive=True)
+        if self.config.distributed:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
         else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+            train_sampler = None
+    
+        val_dataset.scan_folders(valdir, self.config, adptive=False)
+        self.val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False,
+                                                 num_workers=self.config.workers, pin_memory=True)
 
-    cudnn.benchmark = True
-
-    # Data loading code
-    traindir = os.path.join(args.data, 'train/')
-    valdir = os.path.join(args.data, 'test/')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])
-    args.gpu_device = pytorch_env(42)
-    print("====== Parameters ={}".format(args.__dict__))
-
-    train_dataset, val_dataset = surfae_plasmon_set(args, tte='train'), surfae_plasmon_set(args, tte='eval')
-    # train_data.scan_folders('F:/AudioSet/train_npz/',classes, opt, opt.pkl_path + ".train", train=True)
-    train_dataset.scan_folders(traindir, args,  adptive=True)
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
-
-    val_dataset.scan_folders(valdir, args, adptive=False)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
-
-    if args.evaluate:
-        validate(val_loader, model, args)
-        return
-    model_name = model.back_bone
-    vis_title = "{}[{}]_most={}_lr={}".format(model_name,args.normal,args.nMostCls,args.lr)
-    vis = visdom.Visdom(env=vis_title)
-    if False:
-        train_dataset.AdaptiveSample(args.nMostCls)
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,num_workers=args.workers)
-        acc1 = GetGBDT_featrues('C:/CellLab/model_best_(89.8）.pth.tar',model,vis_title,train_loader,val_loader,criterion,opt)
-        #acc1 = GetGBDT_featrues('C:/CellLab/model_best(粒细胞).pth.tar', model, vis_title, train_loader, val_loader,criterion, opt)
-        os._exit(-10)
-
-    for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
-        adjust_learning_rate(optimizer, epoch)
-
-        # train for one epoch
-        train_dataset.AdaptiveSample(args.nMostCls)
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,num_workers=args.workers)
-        train_core(args,vis_title,train_loader, model, optimizer, epoch)
-
-        # evaluate on validation set
-        acc1,_ = validate(vis_title,val_loader, model, epoch,args)
-        vis_plot(args, vis, epoch, acc1,"SPP_net")
-        # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'arch': model.back_bone,
-            'state_dict': model.state_dict(),
-            'best_acc1': best_acc1,
-            'optimizer' : optimizer.state_dict(),
-        }, is_best)
-
-
-def train_core(args,vis_title,train_loader, model, optimizer, epoch):
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
-
-    # switch to train mode
-    model.train()
-
-    end = time.time()
-    for i, (input, metal_true,thickness_true) in enumerate(train_loader):
-        # measure data loading time
-        data_time.update(time.time() - end)
-        plot_batch_grid(input,"./dump/{}".format(vis_title),"train",epoch,i)
-
-        if args.gpu is not None:
-            input = input.cuda(args.gpu, non_blocking=True)
-        metal_true = metal_true.cuda(args.gpu, non_blocking=True)
-        thickness_true = thickness_true.cuda(args.gpu, non_blocking=True)
-
-        # compute output
-        thickness, metal_out = model(input)
+    def Train_(self,resume=False):
+        #SGD确实偏慢
+        #optimizer = torch.optim.SGD(model.parameters(), args.lr,momentum=args.momentum,weight_decay=args.weight_decay, nesterov=True)
+        optimizer = torch.optim.Adam(self.model.parameters(), args.lr,weight_decay=args.weight_decay)
+        self.info = 'Huber_Adam'
+        # optionally resume from a checkpoint
+        if resume:
+            if os.path.isfile(resume):
+                print("=> loading checkpoint '{}'".format(resume))
+                checkpoint = torch.load(resume)
+                args.start_epoch = checkpoint['epoch']
+                self.best_acc1 = checkpoint['best_acc1']
+                self.model.load_state_dict(checkpoint['state_dict'])
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                print("=> loaded checkpoint '{}' (epoch {})".format(resume, checkpoint['epoch']))
+            else:
+                print("=> no checkpoint found at '{}'".format(resume))
+    
+        cudnn.benchmark = True
+        if False and args.evaluate:
+            self.validate(self.val_loader, self.model, args)
+            return
+        model_name = self.model.back_bone
+        vis_title = "{}[{}]_most={}_lr={}".format(model_name,self.info,self.config.nMostCls,self.config.lr)
+        vis = visdom.Visdom(env=vis_title)
         if False:
-            _, metal_max = torch.max(metal_out, 1)
-            _, thickness_max = torch.max(thickness, 1)
+            train_dataset.AdaptiveSample(args.nMostCls)
+            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,num_workers=args.workers)
+            acc1 = GetGBDT_featrues('C:/CellLab/model_best_(89.8）.pth.tar',self.model,vis_title,train_loader,self.val_loader,criterion,opt)
+            #acc1 = GetGBDT_featrues('C:/CellLab/model_best(粒细胞).pth.tar', model, vis_title, train_loader, val_loader,criterion, opt)
+            os._exit(-10)
+    
+        for epoch in range(self.config.start_epoch, self.config.epochs):
+            if self.config.distributed:
+                train_sampler.set_epoch(epoch)
+            adjust_learning_rate(optimizer, epoch)
+    
+            # train for one epoch
+            self.train_dataset.AdaptiveSample(self.config.nMostCls)
+            self.train_loader = torch.utils.data.DataLoader(self.train_dataset, batch_size=self.config.batch_size, shuffle=True,num_workers=self.config.workers)
+            self.train_core(vis_title,self.train_loader, self.model, optimizer, epoch)
+    
+            # evaluate on validation set
+            acc1,_ = self.validate(vis_title,self.val_loader, self.model, epoch,self.config)
+            vis_plot(self.config, vis, epoch, acc1,"SPP_net")
+            # remember best acc@1 and save checkpoint
+            is_best = acc1 > self.best_acc1
+            self.best_acc1 = max(acc1, self.best_acc1)
+            save_checkpoint({
+                'epoch': epoch + 1,
+                'arch': self.model.back_bone,
+                'state_dict': self.model.state_dict(),
+                'best_acc1': self.best_acc1,
+                'optimizer' : optimizer.state_dict(),
+            }, is_best)
 
-        thickness_loss = args.thickness_criterion(thickness, thickness_true)
-        if args.hybrid_metal>0:
-            metal_loss = args.metal_criterion(metal_out, metal_true)
-            loss = metal_loss * args.hybrid_metal + thickness_loss * (1 - args.hybrid_metal)
-        else:
-            loss =thickness_loss
-        #loss = criterion(output, target)
 
-        # measure accuracy and record loss
-        acc_thick,acc_metal = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
-        losses.update(loss.item(), input.size(0))
-        top1.update(acc_thick, input.size(0))
-        top5.update(acc_metal, input.size(0))
+    def train_core(self,vis_title,train_loader, model, optimizer, epoch):
+        args = self.config
+        batch_time = AverageMeter()
+        data_time = AverageMeter()
+        losses = AverageMeter()
+        top1 = AverageMeter()
+        top5 = AverageMeter()
 
-        # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        # switch to train mode
+        model.train()
 
-        # measure elapsed time
-        batch_time.update(time.time() - end)
         end = time.time()
+        for i, (input, metal_true,thickness_true) in enumerate(train_loader):
+            # measure data loading time
+            data_time.update(time.time() - end)
+            plot_batch_grid(input,"./dump/{}".format(vis_title),"train",epoch,i)
 
-        if i % args.print_freq == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Acc@2 {top2.val:.3f} ({top2.avg:.3f})'.format(
-                   epoch, i, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, top1=top1, top2=top5))
-
-
-
-def validate(vis_title,val_loader, model, epoch,opt,gbdt_features=None):
-    batch_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
-
-    # switch to evaluate mode
-    model.eval()
-    predicts=[]
-    nClass=4
-    accu_cls_=np.zeros(nClass)
-    accu_cls_1 = np.zeros(nClass)
-    with torch.no_grad():
-        end = time.time()
-        for i, (input, metal_true,thickness_true) in enumerate(val_loader):
-            plot_batch_grid(input, "./dump/{}".format(vis_title), "valid", epoch, i)
-            if args.gpu is not None:
-                input = input.cuda(args.gpu, non_blocking=True)
-                metal_true = metal_true.cuda(args.gpu, non_blocking=True)
-                thickness_true = thickness_true.cuda(args.gpu, non_blocking=True)
+            if args.gpu_device is not None:
+                input = input.cuda(args.gpu_device, non_blocking=True)
+            metal_true = metal_true.cuda(args.gpu_device, non_blocking=True)
+            thickness_true = thickness_true.cuda(args.gpu_device, non_blocking=True)
 
             # compute output
             thickness, metal_out = model(input)
-            thickness_loss = args.thickness_criterion(thickness, thickness_true)
-            if args.hybrid_metal > 0:
-                metal_loss = args.metal_criterion(metal_out, metal_true)
-                loss = metal_loss * args.hybrid_metal + thickness_loss * (1 - args.hybrid_metal)
-            else:
-                loss = thickness_loss
+            loss = model.loss(thickness, thickness_true, metal_out, metal_true)
+            if False:
+                _, metal_max = torch.max(metal_out, 1)
+                _, thickness_max = torch.max(thickness, 1)
+                thickness_loss = model.thickness_criterion(thickness, thickness_true)
+                if model.hybrid_metal>0:
+                    metal_loss = args.metal_criterion(metal_out, metal_true)
+                    loss = metal_loss * model.hybrid_metal + thickness_loss * (1 - model.hybrid_metal)
+                else:
+                    loss =thickness_loss
+
+
             # measure accuracy and record loss
-            acc_thick, acc_metal = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
-            if False:        #each class by cys
-                for i in range(len(pred)):
-                    cls = target[i]
-                    accu_cls_[cls]=accu_cls_[cls]+1
-                    if(pred[i]==cls):
-                        accu_cls_1[cls] = accu_cls_1[cls] + 1
+            acc_thick,acc_metal = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
             losses.update(loss.item(), input.size(0))
             top1.update(acc_thick, input.size(0))
             top5.update(acc_metal, input.size(0))
+
+            # compute gradient and do SGD step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
             if i % args.print_freq == 0:
-                print('Test: [{0}/{1}]\t'
+                print('Epoch: [{0}][{1}/{2}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                      'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                       'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                      'Acc@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                       i, len(val_loader), batch_time=batch_time, loss=losses,
-                       top1=top1, top5=top5))
+                      'Acc@2 {top2.val:.3f} ({top2.avg:.3f})'.format(
+                       epoch, i, len(train_loader), batch_time=batch_time,
+                       data_time=data_time, loss=losses, top1=top1, top2=top5))
 
-        print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
-    for i in range(nClass):
-        cls=['au', 'ag', 'al', 'cu'][i]
-        nz=(int)(accu_cls_[i])
-        #print("{}-{}-{:.3g}".format(cls,nz,accu_cls_1[i]/nz),end=" ")
-    print("err=".format(0))
-    return top1.avg,predicts
+
+
+    def validate(self,vis_title,val_loader, model, epoch,opt,gbdt_features=None):
+        args = self.config
+        batch_time = AverageMeter()
+        losses = AverageMeter()
+        top1 = AverageMeter()
+        top5 = AverageMeter()
+
+        # switch to evaluate mode
+        model.eval()
+        predicts=[]
+        nClass=4
+        accu_cls_=np.zeros(nClass)
+        accu_cls_1 = np.zeros(nClass)
+        with torch.no_grad():
+            end = time.time()
+            for i, (input, metal_true,thickness_true) in enumerate(val_loader):
+                plot_batch_grid(input, "./dump/{}".format(vis_title), "valid", epoch, i)
+                if args.gpu_device is not None:
+                    input = input.cuda(args.gpu_device, non_blocking=True)
+                    metal_true = metal_true.cuda(args.gpu_device, non_blocking=True)
+                    thickness_true = thickness_true.cuda(args.gpu_device, non_blocking=True)
+
+                # compute output
+                thickness, metal_out = model(input)
+                loss = model.loss(thickness,thickness_true,metal_out,metal_true)
+
+                # measure accuracy and record loss
+                acc_thick, acc_metal = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
+                if False:        #each class by cys
+                    for i in range(len(pred)):
+                        cls = target[i]
+                        accu_cls_[cls]=accu_cls_[cls]+1
+                        if(pred[i]==cls):
+                            accu_cls_1[cls] = accu_cls_1[cls] + 1
+                losses.update(loss.item(), input.size(0))
+                top1.update(acc_thick, input.size(0))
+                top5.update(acc_metal, input.size(0))
+
+                # measure elapsed time
+                batch_time.update(time.time() - end)
+                end = time.time()
+
+                if i % args.print_freq == 0:
+                    print('Test: [{0}/{1}]\t'
+                          'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                          'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                          'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+                          'Acc@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
+                           i, len(val_loader), batch_time=batch_time, loss=losses,
+                           top1=top1, top5=top5))
+
+            print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
+        for i in range(nClass):
+            cls=['au', 'ag', 'al', 'cu'][i]
+            nz=(int)(accu_cls_[i])
+            #print("{}-{}-{:.3g}".format(cls,nz,accu_cls_1[i]/nz),end=" ")
+        print("err=".format(0))
+        return top1.avg,predicts
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
@@ -427,4 +386,9 @@ def accuracy(metal_out, metal_true,thickness_out, thickness_true, topk=(1,)):
 
 
 if __name__ == '__main__':
-    main()
+    args = parser.parse_args()
+    config = TORCH_config(args)
+    module = SPP_Model(config)
+    learn = SPP_Torch(config, module)
+    learn.Train_()
+    learn.Evaluate_()

@@ -1,6 +1,7 @@
 #coding:utf8
 import warnings
 #from pytorch_env import *
+import random
 import numpy.polynomial.chebyshev as cheb
 
 class DefaultConfig(object):
@@ -80,6 +81,8 @@ class DefaultConfig(object):
         #self.use_bn = "none"
         self.loss_curve_title = "Loss"
         #self.loss_curve_title = "Other Loss"
+
+
 
 
 
