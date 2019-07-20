@@ -272,8 +272,8 @@ class surfae_plasmon_set(data.Dataset):
         img_path,metal_labels = device.path,device.metal_labels()
         data = Image.open(img_path)
         data = self.transforms(data)
-        metal_labels = metal_labels[0]
-        #metal_labels = np.asarray(metal_labels).astype(np.int64)
+        #metal_labels = metal_labels[0]
+        metal_labels = np.asarray(metal_labels).astype(np.int64)
         thickness = np.asarray(device.thickness).astype(np.float32)
         return data, metal_labels,thickness
         #return tX_, tY_

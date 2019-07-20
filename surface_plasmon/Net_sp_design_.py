@@ -36,7 +36,7 @@ else:
 #print(subprocess.check_output(['python -m visdom.server']))
 
 
-if True:
+def InitParser():
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
     parser.add_argument('data', metavar='DIR',help='path to dataset')
     #parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18', help='model architecture: ' +' | '.join(model_names) + ' (default: resnet34)')
@@ -73,6 +73,7 @@ if True:
     parser.add_argument('--gpu', default=None, type=int,
                         help='GPU id to use.')
     print(parser)
+    return parser
 
 def GetTarget(dat_loader):
     target_list=[]
@@ -203,8 +204,8 @@ class SPP_Torch(object):
         batch_time = AverageMeter()
         data_time = AverageMeter()
         losses = AverageMeter()
-        top1 = AverageMeter()
-        top5 = AverageMeter()
+        acc_thick = AverageMeter()
+        acc_metal = AverageMeter()
 
         # switch to train mode
         model.train()
@@ -235,10 +236,10 @@ class SPP_Torch(object):
 
 
             # measure accuracy and record loss
-            acc_thick,acc_metal = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
+            _thick,_metal = accuracy(metal_out, metal_true,thickness, thickness_true)
             losses.update(loss.item(), input.size(0))
-            top1.update(acc_thick, input.size(0))
-            top5.update(acc_metal, input.size(0))
+            acc_thick.update(_thick, input.size(0))
+            acc_metal.update(_metal, input.size(0))
 
             # compute gradient and do SGD step
             optimizer.zero_grad()
@@ -254,10 +255,10 @@ class SPP_Torch(object):
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                      'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                      'Acc@2 {top2.val:.3f} ({top2.avg:.3f})'.format(
+                      'Acc@thickness {top1.val:.3f} ({top1.avg:.3f})\t'
+                      'Acc@metal type {top2.val:.3f} ({top2.avg:.3f})'.format(
                        epoch, i, len(train_loader), batch_time=batch_time,
-                       data_time=data_time, loss=losses, top1=top1, top2=top5))
+                       data_time=data_time, loss=losses, top1=acc_thick, top2=acc_metal))
 
 
 
@@ -265,8 +266,8 @@ class SPP_Torch(object):
         args = self.config
         batch_time = AverageMeter()
         losses = AverageMeter()
-        top1 = AverageMeter()
-        top5 = AverageMeter()
+        acc_thick = AverageMeter()
+        acc_metal = AverageMeter()
 
         # switch to evaluate mode
         model.eval()
@@ -288,7 +289,7 @@ class SPP_Torch(object):
                 loss = model.loss(thickness,thickness_true,metal_out,metal_true)
 
                 # measure accuracy and record loss
-                acc_thick, acc_metal = accuracy(metal_out, metal_true,thickness, thickness_true, topk=(1, 1))
+                _thick, _metal = accuracy(metal_out, metal_true,thickness, thickness_true)
                 if False:        #each class by cys
                     for i in range(len(pred)):
                         cls = target[i]
@@ -296,29 +297,20 @@ class SPP_Torch(object):
                         if(pred[i]==cls):
                             accu_cls_1[cls] = accu_cls_1[cls] + 1
                 losses.update(loss.item(), input.size(0))
-                top1.update(acc_thick, input.size(0))
-                top5.update(acc_metal, input.size(0))
+                acc_thick.update(_thick, input.size(0))
+                acc_metal.update(_metal, input.size(0))
 
                 # measure elapsed time
                 batch_time.update(time.time() - end)
                 end = time.time()
 
-                if i % args.print_freq == 0:
-                    print('Test: [{0}/{1}]\t'
-                          'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                          'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                          'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                          'Acc@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                           i, len(val_loader), batch_time=batch_time, loss=losses,
-                           top1=top1, top5=top5))
-
-            print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
+            print(' * Acc@Thickness {top1.avg:.3f} Acc@Metal type {top5.avg:.3f}'.format(top1=acc_thick, top5=acc_metal))
         for i in range(nClass):
             cls=['au', 'ag', 'al', 'cu'][i]
             nz=(int)(accu_cls_[i])
             #print("{}-{}-{:.3g}".format(cls,nz,accu_cls_1[i]/nz),end=" ")
         print("err=".format(0))
-        return top1.avg,predicts
+        return acc_thick.avg,predicts
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
@@ -352,11 +344,10 @@ def adjust_learning_rate(optimizer, epoch):
         param_group['lr'] = lr
 
 
-def accuracy(metal_out, metal_true,thickness_out, thickness_true, topk=(1,)):
+def accuracy(metal_out, metal_true,thickness_out, thickness_true):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     p1 = None
     with torch.no_grad():
-        maxk = max(topk)
         batch_size = metal_true.size(0)
         thickness = thickness_out.cpu().data.numpy()
         thickness_true = thickness_true.cpu().data.numpy()
@@ -366,29 +357,27 @@ def accuracy(metal_out, metal_true,thickness_out, thickness_true, topk=(1,)):
             metal_accu=0
         else:
         #topk   A namedtuple of (values, indices) is returned, where the indices are the indices of the elements in the original input tensor.
-            _, pred = metal_out.topk(maxk, 1, True, True)
-            pred = pred.t()
-            t1 = metal_true.view(1, -1).expand_as(pred)
-            correct = pred.eq(metal_true.view(1, -1).expand_as(pred))
+            _, t1 = metal_out.topk(1, 2, True, True)
+            pred = t1.view(batch_size,-1)
+            correct = pred.eq(metal_true)
+            nEle  = correct.numel()
+            correct_k = correct.view(-1).float().sum(0, keepdim=True)
+            metal_accu = correct_k.mul_(100.0 / nEle).item()
 
-            res = []
-            for k in topk:
-                correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-                res.append(correct_k.mul_(100.0 / batch_size))
-
-            if True:    #each class accuracy by cys     5_1_2019
+            if False:    #each class accuracy by cys     5_1_2019
                 _, pred_1 = metal_out.topk(1, 1, True, True)
                 p1,t1=pred_1.t().cpu().numpy().squeeze(),metal_true.cpu().numpy()
                 assert(p1.shape==t1.shape)
-            metal_accu = res[0].cpu().numpy().squeeze()
+
         return thickness_accu,metal_accu
         #return res,p1
 
 
 if __name__ == '__main__':
+    parser=InitParser()
     args = parser.parse_args()
     config = TORCH_config(args)
-    module = SPP_Model(config)
+    module = SPP_Model(config,nFilmLayer=10)
     learn = SPP_Torch(config, module)
     learn.Train_()
     learn.Evaluate_()

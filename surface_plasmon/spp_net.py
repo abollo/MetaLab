@@ -7,6 +7,7 @@ from torch.autograd import Variable
 # from resnet import resnet50
 from copy import deepcopy
 import numpy as np
+from Torch_config import *
 
 
 def image_transformer():
@@ -65,7 +66,7 @@ class SPP_Model(torch.nn.Module, ):
         # model_name='alexnet'
         # model_name='senet154'
 
-    def __init__(self, config):
+    def __init__(self, config,nFilmLayer=10):
         super(SPP_Model, self).__init__()
 
         self.config = config
@@ -73,16 +74,21 @@ class SPP_Model(torch.nn.Module, ):
         self.resNet = models.resnet18(pretrained=True)
         print(f"=> creating model '{self.back_bone}'")
         #self.use_gpu = torch.cuda.is_available()
-        self.nLayer = 10
+        self.nFilmLayer = nFilmLayer
+        self.nMetalLayer = (int)(self.nFilmLayer/2)
         self.nMostThick = 200
         self.nMetalType = 4
-        self.hybrid_metal = 0
+        self.hybrid_metal = 0.1
 
         self.fc1 = nn.Linear(512, 512)
-        self.thickness_pred = nn.Linear(512, self.nLayer)
+        self.thickness_pred = nn.Linear(512, self.nFilmLayer)
 
         self.fc2 = nn.Linear(512, 512)
-        self.metal_cls_pred = nn.Linear(512, self.nMetalType)
+        self.metal_types=[]
+        for i in range(self.nMetalLayer):
+            metal_type = nn.Linear(512, self.nMetalType)
+            self.metal_types.append(metal_type)
+        self.metal_types=nn.ModuleList(self.metal_types)
 
         self.thickness_criterion = nn.L1Loss()
         self.thickness_criterion = nn.SmoothL1Loss()
@@ -101,9 +107,15 @@ class SPP_Model(torch.nn.Module, ):
         print(f"{self}\nthickness_criterion={self.thickness_criterion}\nmetal_criterion={self.metal_criterion}")
 
     def loss(self,thickness,thickness_true,metal_out,metal_true):
+        nSample = metal_out.shape[0]
         thickness_loss = self.thickness_criterion(thickness, thickness_true)
         if self.hybrid_metal > 0:
-            metal_loss = self.metal_criterion(metal_out, metal_true)
+            metal_loss = 0
+            for i in range(nSample):
+                for j in range(self.nMetalLayer):
+                    t1 = metal_out[i][j].unsqueeze(0)
+                    t2 = metal_true[i][j].unsqueeze(0)
+                    metal_loss = metal_loss+self.metal_criterion(t1,t2)
             loss = metal_loss * self.hybrid_metal + thickness_loss * (1 - self.hybrid_metal)
         else:
             loss = thickness_loss
@@ -128,6 +140,7 @@ class SPP_Model(torch.nn.Module, ):
         return x  # out = [N, 512, 1 ,1]
 
     def get_device(self, last_conv_out):
+        nSample = last_conv_out.shape[0]
         last_conv_out = self.resNet.avgpool(last_conv_out)
         last_conv_out = last_conv_out.view(last_conv_out.size(0), -1)
 
@@ -135,9 +148,14 @@ class SPP_Model(torch.nn.Module, ):
         thickness = self.thickness_pred(thickness)
         # thickness = F.softmax(self.thickness_pred(thickness), 1)
 
-        metal_cls = F.relu(self.fc2(last_conv_out))
+        metal_map = F.relu(self.fc2(last_conv_out))
         if self.hybrid_metal > 0:
-            metal_cls = self.metal_cls_pred(metal_cls)
+            metal_cls = torch.zeros((nSample,self.nMetalLayer,self.nMetalType))
+            if self.config.gpu_device is not None:
+                metal_cls = metal_cls.cuda(self.config.gpu_device, non_blocking=True)
+            for i in range(self.nMetalLayer):
+                cur_cls = self.metal_types[i](metal_map)
+                metal_cls[:,i,:] = cur_cls
         else:
             metal_cls = None
 
@@ -150,7 +168,7 @@ class SPP_Model(torch.nn.Module, ):
 
     def evaluate(self, faces):
         preds = []
-        weigh = np.linspace(1, self.nLayer, self.nLayer)
+        weigh = np.linspace(1, self.nFilmLayer, self.nFilmLayer)
 
         for face in faces:
             face = Variable(torch.unsqueeze(face, 0))
@@ -163,7 +181,7 @@ class SPP_Model(torch.nn.Module, ):
             metal_prob = metal_prob.cpu().data.numpy()[0]
 
             thickness_probs = thickness.cpu().data.numpy()
-            thickness_probs.resize((self.nLayer,))
+            thickness_probs.resize((self.nFilmLayer,))
 
             # expectation and variance
             thickness_pred = sum(thickness_probs * weigh)
@@ -174,6 +192,19 @@ class SPP_Model(torch.nn.Module, ):
 
 
 if __name__ == "__main__":
-    a = SPP_Model()
+    if True:       #only for debug
+        t0 = torch.tensor([0.3]).cuda()
+        a = t0.item()
+        t0 = torch.zeros((16, 5, 4))
+        f = nn.CrossEntropyLoss()
+        t1 = t0[1,1]
+        t1 = t1.unsqueeze(0)
+        x = torch.tensor([[0.0000,  0.0000,  0.1527]])
+        a = f( x,torch.tensor([2]))
+        a = f(t1,torch.tensor(2))
+        cur_cls = torch.ones((16,4))
+        t0[:,1,:] = cur_cls
+    config = TORCH_config(None)
+    a = SPP_Model(config,nFilmLayer=10)
     print(f"SPP_Model={a}")
     pass

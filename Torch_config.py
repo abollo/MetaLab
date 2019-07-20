@@ -11,7 +11,14 @@ class TORCH_config(object):
     """ parameters of pytroch(neural networks...,) """
 
     def __init__(self, args,fix_seed=None):
-        self.__dict__.update(args.__dict__)
+        if args is not None:
+            self.__dict__.update(args.__dict__)
+            self.distributed = self.world_size > 1
+        else:
+            self.seed = 42
+            self.distributed = False
+            pass
+
         self.nMostCls = 5000
         self.input_shape = [3, 224, 224]
 
@@ -30,11 +37,10 @@ class TORCH_config(object):
             warnings.warn('You have chosen a specific GPU. This will completely '
                           'disable data parallelism.')
 
-        self.distributed = self.world_size > 1
+
 
         if self.distributed:
-            dist.init_process_group(backend=self.dist_backend, init_method=self.dist_url,
-                                    world_size=self.world_size)
+            dist.init_process_group(backend=self.dist_backend, init_method=self.dist_url,world_size=self.world_size)
         self.pretrained = True
 
         self.lr = 0.0001
