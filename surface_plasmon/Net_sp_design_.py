@@ -21,8 +21,10 @@ from utils.plot_tensor import *
 from Torch_config import *
 from sp_set import surfae_plasmon_set
 from spp_net import *
+from sp_spectrum import *
 import visdom
 import sys
+import cv2
 from utils.visualize import *
 
 import pickle
@@ -142,50 +144,47 @@ class SPP_Torch(object):
         self.val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False,
                                                  num_workers=self.config.workers, pin_memory=True)
 
-    def Train_(self,resume=False):
+
+    def Train_(self,check_model=None):
         #SGD确实偏慢
         #optimizer = torch.optim.SGD(model.parameters(), args.lr,momentum=args.momentum,weight_decay=args.weight_decay, nesterov=True)
         optimizer = torch.optim.Adam(self.model.parameters(), args.lr,weight_decay=args.weight_decay)
         self.info = 'Huber_Adam'
         # optionally resume from a checkpoint
-        if resume:
-            if os.path.isfile(resume):
-                print("=> loading checkpoint '{}'".format(resume))
-                checkpoint = torch.load(resume)
-                args.start_epoch = checkpoint['epoch']
-                self.best_acc1 = checkpoint['best_acc1']
-                self.model.load_state_dict(checkpoint['state_dict'])
-                optimizer.load_state_dict(checkpoint['optimizer'])
-                print("=> loaded checkpoint '{}' (epoch {})".format(resume, checkpoint['epoch']))
-            else:
-                print("=> no checkpoint found at '{}'".format(resume))
-    
+        if check_model is not None and os.path.isfile(check_model):
+            print("=> loading checkpoint '{}'".format(check_model))
+            self.check_model=check_model
+            checkpoint = torch.load(check_model)
+            args.start_epoch = checkpoint['epoch']
+            self.best_acc1 = checkpoint['best_acc1']
+            self.model.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            print(f"=> best_acc1='{self.best_acc1}' (epoch {checkpoint['epoch']})")
+
         cudnn.benchmark = True
         if False and args.evaluate:
             self.validate(self.val_loader, self.model, args)
             return
         model_name = self.model.back_bone
-        vis_title = "{}[{}]_most={}_lr={}".format(model_name,self.info,self.config.nMostCls,self.config.lr)
-        vis = visdom.Visdom(env=vis_title)
-        if False:
-            train_dataset.AdaptiveSample(args.nMostCls)
-            train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,num_workers=args.workers)
-            acc1 = GetGBDT_featrues('C:/CellLab/model_best_(89.8）.pth.tar',self.model,vis_title,train_loader,self.val_loader,criterion,opt)
-            #acc1 = GetGBDT_featrues('C:/CellLab/model_best(粒细胞).pth.tar', model, vis_title, train_loader, val_loader,criterion, opt)
-            os._exit(-10)
+        self.vis_title = "{}[{}]_most={}_lr={}".format(model_name,self.info,self.config.nMostCls,self.config.lr)
+        self.dump_dir = "E:/MetaLab/dump/"
+        vis = visdom.Visdom(env=self.vis_title)
     
         for epoch in range(self.config.start_epoch, self.config.epochs):
             if self.config.distributed:
-                train_sampler.set_epoch(epoch)
+                self.train_sampler.set_epoch(epoch)
             adjust_learning_rate(optimizer, epoch)
-    
+
             # train for one epoch
-            self.train_dataset.AdaptiveSample(self.config.nMostCls)
-            self.train_loader = torch.utils.data.DataLoader(self.train_dataset, batch_size=self.config.batch_size, shuffle=True,num_workers=self.config.workers)
-            self.train_core(vis_title,self.train_loader, self.model, optimizer, epoch)
+            if resume:
+                pass
+            else:
+                self.train_dataset.AdaptiveSample(self.config.nMostCls)
+                self.train_loader = torch.utils.data.DataLoader(self.train_dataset, batch_size=self.config.batch_size, shuffle=True,num_workers=self.config.workers)
+                self.train_core(self.train_loader, self.model, optimizer, epoch)
     
             # evaluate on validation set
-            acc1,_ = self.validate(vis_title,self.val_loader, self.model, epoch,self.config)
+            acc1,_ = self.validate(self.val_loader, self.model, epoch,self.config)
             vis_plot(self.config, vis, epoch, acc1,"SPP_net")
             # remember best acc@1 and save checkpoint
             is_best = acc1 > self.best_acc1
@@ -199,7 +198,7 @@ class SPP_Torch(object):
             }, is_best)
 
 
-    def train_core(self,vis_title,train_loader, model, optimizer, epoch):
+    def train_core(self,train_loader, model, optimizer, epoch):
         args = self.config
         batch_time = AverageMeter()
         data_time = AverageMeter()
@@ -214,7 +213,7 @@ class SPP_Torch(object):
         for i, (input, metal_true,thickness_true) in enumerate(train_loader):
             # measure data loading time
             data_time.update(time.time() - end)
-            plot_batch_grid(input,"./dump/{}".format(vis_title),"train",epoch,i)
+            plot_batch_grid(input,self.dump_dir,"train",epoch,i)
 
             if args.gpu_device is not None:
                 input = input.cuda(args.gpu_device, non_blocking=True)
@@ -260,9 +259,31 @@ class SPP_Torch(object):
                        epoch, i, len(train_loader), batch_time=batch_time,
                        data_time=data_time, loss=losses, top1=acc_thick, top2=acc_metal))
 
+    def Plot_Compare(self,input_imags,epoch,batch,thickness_out, metal_out):
+        #plot_batch_grid(input, self.dump_dir, "train", epoch, i)
+        nSamp=metal_out.shape[0]
+        assert(len(input_imags)==nSamp)
+        _,metal_out = metal_out.topk(1, 2, True, True)
+        metal_out=metal_out.view(nSamp, -1)
+        materials = ['au', 'ag', 'al', 'cu']
+        #plot_batch_grid(input, self.dump_dir, "valid", epoch, batch)
+        for j in range(nSamp):
 
+            thickness=thickness_out[j,:]
+            metal_nos=metal_out[j,:]
+            metals=[]
+            for type in metal_nos:
+                assert(type>=0 and type<4)
+                metals.append(materials[type])
+            device = SP_device(thickness.cpu().numpy(), metals, 1, "", args)
+            img_1 = device.HeatMap()
 
-    def validate(self,vis_title,val_loader, model, epoch,opt,gbdt_features=None):
+            cv2.imwrite(f"{args.dump_dir}/{j}_1.jpg",img_1)
+            img = input_imags[j].cpu().numpy()
+            cv2.imwrite(f"{args.dump_dir}/{j}_0.jpg", img)
+
+    def validate(self,val_loader, model, epoch,opt,gbdt_features=None):
+        valset = self.val_loader.dataset
         args = self.config
         batch_time = AverageMeter()
         losses = AverageMeter()
@@ -277,16 +298,19 @@ class SPP_Torch(object):
         accu_cls_1 = np.zeros(nClass)
         with torch.no_grad():
             end = time.time()
-            for i, (input, metal_true,thickness_true) in enumerate(val_loader):
-                plot_batch_grid(input, "./dump/{}".format(vis_title), "valid", epoch, i)
+
+            valset.isSaveItem = True
+            for i, (input, metal_true,thickness_true,images) in enumerate(val_loader):
+
                 if args.gpu_device is not None:
                     input = input.cuda(args.gpu_device, non_blocking=True)
                     metal_true = metal_true.cuda(args.gpu_device, non_blocking=True)
                     thickness_true = thickness_true.cuda(args.gpu_device, non_blocking=True)
-
                 # compute output
                 thickness, metal_out = model(input)
                 loss = model.loss(thickness,thickness_true,metal_out,metal_true)
+                if self.check_model is not None:
+                    self.Plot_Compare(images,epoch,i,thickness, metal_out)
 
                 # measure accuracy and record loss
                 _thick, _metal = accuracy(metal_out, metal_true,thickness, thickness_true)
@@ -299,7 +323,7 @@ class SPP_Torch(object):
                 losses.update(loss.item(), input.size(0))
                 acc_thick.update(_thick, input.size(0))
                 acc_metal.update(_metal, input.size(0))
-
+                valset.after_batch()
                 # measure elapsed time
                 batch_time.update(time.time() - end)
                 end = time.time()
@@ -376,8 +400,15 @@ def accuracy(metal_out, metal_true,thickness_out, thickness_true):
 if __name__ == '__main__':
     parser=InitParser()
     args = parser.parse_args()
+    args = ArgsOnSpectrum(args)
+    args.dump_dir='E:/MetaLab/dump/'
+    if False:
+        thickness=[6,19,6,76,8,8,5,25,5,9]
+        device = SP_device(thickness,['ag', 'ag', 'au', 'cu','au'],1,"",args)
+        device.HeatMap()
     config = TORCH_config(args)
     module = SPP_Model(config,nFilmLayer=10)
     learn = SPP_Torch(config, module)
-    learn.Train_()
+    re_model="E:/MetaLab/models/spp/spp_7_21.pth.tar"
+    learn.Train_(resume=re_model)
     learn.Evaluate_()

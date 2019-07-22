@@ -2,6 +2,8 @@ import numpy as np
 import gc
 from numba import jit
 from numba import njit, float32, int32,complex64
+import warnings
+warnings.filterwarnings('ignore')
 
 # https://stackoverflow.com/questions/43100286/python-trigonometric-calculations-in-degrees
 @jit

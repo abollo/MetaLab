@@ -181,6 +181,8 @@ class SPP_TRANS(object):
 class surfae_plasmon_set(data.Dataset):
     def __init__(self, params,tte='train', user_trans=None ):
         self.random_pick = None
+        self.imag_list = []
+        self.isSaveItem=False
         self.classes = []
         self.devices = []
 
@@ -195,6 +197,10 @@ class surfae_plasmon_set(data.Dataset):
 
     def AdaptiveSample(self,nMaxCls):
         pass
+
+    def after_batch(self):
+        self.imag_list = []
+        gc.collect()
 
     def scan_folders(self, root_path, params, adptive=False,pkl_path=None):
         self.root = root_path
@@ -275,7 +281,11 @@ class surfae_plasmon_set(data.Dataset):
         #metal_labels = metal_labels[0]
         metal_labels = np.asarray(metal_labels).astype(np.int64)
         thickness = np.asarray(device.thickness).astype(np.float32)
-        return data, metal_labels,thickness
+        cv_imag=None
+        if self.isSaveItem:
+            cv_imag = cv2.imread(img_path)
+            #self.imag_list.append(cv_imag)
+        return data, metal_labels,thickness,cv_imag
         #return tX_, tY_
 
     def __len__(self):

@@ -4,8 +4,9 @@ from torchvision.utils import make_grid
 import numpy as np
 import sys
 
-def plot_batch_grid( tensor,path, label,epoch,i ):
-    return
+def plot_batch_grid( tensor,path, label,epoch,no ):
+    if no > 10 :
+        return
     nImg = tensor.shape[0]
     imglist=[]
     for i in range(nImg):
@@ -13,7 +14,9 @@ def plot_batch_grid( tensor,path, label,epoch,i ):
     grids = make_grid(imglist, padding=10, normalize=True, scale_each=False )
     np_grid = grids.cpu().numpy()
     plt.imshow(np.transpose(np_grid, (1, 2, 0)), interpolation='nearest')
-    plt.show()
+    path = f"{path}/{label}_{epoch}_{no}.jpg"
+    plt.savefig(path)
+    #plt.show()
 
 def plot_tensor_4d_slide( tensor ):
     array = tensor.cpu().numpy()
