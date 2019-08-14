@@ -176,7 +176,7 @@ class SPP_Torch(object):
             adjust_learning_rate(optimizer, epoch)
 
             # train for one epoch
-            if resume:
+            if self.check_model is not None:
                 pass
             else:
                 self.train_dataset.AdaptiveSample(self.config.nMostCls)
@@ -210,7 +210,7 @@ class SPP_Torch(object):
         model.train()
 
         end = time.time()
-        for i, (input, metal_true,thickness_true) in enumerate(train_loader):
+        for i, (input, metal_true,thickness_true,indexs) in enumerate(train_loader):
             # measure data loading time
             data_time.update(time.time() - end)
             plot_batch_grid(input,self.dump_dir,"train",epoch,i)
@@ -259,16 +259,61 @@ class SPP_Torch(object):
                        epoch, i, len(train_loader), batch_time=batch_time,
                        data_time=data_time, loss=losses, top1=acc_thick, top2=acc_metal))
 
-    def Plot_Compare(self,input_imags,epoch,batch,thickness_out, metal_out):
+#plot输出太累了
+    def Plot_Compare(self,devices,epoch,batch,thickness_out, metal_out):
         #plot_batch_grid(input, self.dump_dir, "train", epoch, i)
         nSamp=metal_out.shape[0]
-        assert(len(input_imags)==nSamp)
+        #t_size=(256,256)
+        #assert(len(input_imags)==nSamp)
         _,metal_out = metal_out.topk(1, 2, True, True)
         metal_out=metal_out.view(nSamp, -1)
         materials = ['au', 'ag', 'al', 'cu']
+        #fig, ax = plt.subplots(nSamp,2)         #  figsize=(10, 5 * nSamp))
         #plot_batch_grid(input, self.dump_dir, "valid", epoch, batch)
         for j in range(nSamp):
+            img_path, metal_labels = devices[j].path, devices[j].metal_labels()
+            img_0 = cv2.imread(img_path)
+            cv2.imwrite(f"{args.dump_dir}/{batch*100+j}_user_{devices[j].info}.jpg",img_0)
+            #img_0 = cv2.resize(img_0, t_size)
+            #ax[j,0].imshow(cv2.cvtColor(img_0, cv2.COLOR_BGR2RGB))            ax[j,0].set_title(devices[j].info)
 
+            if True:
+                thickness=thickness_out[j,:]
+                metal_nos=metal_out[j,:]
+                metals=[]
+                for type in metal_nos:
+                    assert(type>=0 and type<4)
+                    metals.append(materials[type])
+                device = SP_device(thickness.cpu().numpy(), metals, 1, "", args)
+                img_1 = device.HeatMap()
+                if False:
+                    cv2.imwrite(f"{args.dump_dir}/{batch * 100 + j}_pred_{device.title}.jpg", img_1)
+                else:
+                    img_1 = cv2.resize(img_1,(img_0.shape[1],img_0.shape[0]), interpolation=cv2.INTER_CUBIC)
+                    #img_off =np.abs(img_1-img_0)
+                    image_all = np.concatenate((img_0, img_1), axis=1)
+                    cv2.imshow("", image_all);                    cv2.waitKey(0)
+                    cv2.imwrite(f"{args.dump_dir}/{batch * 100 + j}_off_{device.title}.jpg", img_off)
+
+                print("")
+            else:
+                img_1 = img_0
+            #ax[j,1].imshow(cv2.cvtColor(img_1, cv2.COLOR_BGR2RGB))            ax[j,1].set_title(f"Predict")
+            #cv2.imwrite(f"{args.dump_dir}/{j}_1.jpg",img_1)
+            #break
+        #path = f"{args.dump_dir}/Plot_Compare_{nSamp}_{epoch}_.jpg"        plt.savefig(path)
+        print("")
+            #cv2.imwrite(f"{args.dump_dir}/{j}_0.jpg", img)
+
+    def Plot_Compare_1(self,devices,epoch,batch,thickness_out, metal_out):
+        nSamp=metal_out.shape[0]
+        _,metal_out = metal_out.topk(1, 2, True, True)
+        metal_out=metal_out.view(nSamp, -1)
+        materials = ['au', 'ag', 'al', 'cu']
+        for j in range(nSamp):
+            img_path, metal_labels = devices[j].path, devices[j].metal_labels()
+            device_0 = SP_device(devices[j].thickness, devices[j].metal_types, 1, "", args)
+            #img_0 = cv2.imread(img_path)
             thickness=thickness_out[j,:]
             metal_nos=metal_out[j,:]
             metals=[]
@@ -276,11 +321,12 @@ class SPP_Torch(object):
                 assert(type>=0 and type<4)
                 metals.append(materials[type])
             device = SP_device(thickness.cpu().numpy(), metals, 1, "", args)
-            img_1 = device.HeatMap()
+            #path = f"{args.compare_dir}/{batch * 100 + j}_off_{device.title}.jpg"
 
-            cv2.imwrite(f"{args.dump_dir}/{j}_1.jpg",img_1)
-            img = input_imags[j].cpu().numpy()
-            cv2.imwrite(f"{args.dump_dir}/{j}_0.jpg", img)
+            SPP_compare(device_0, device,f"{batch * 100 + j}","", args)
+            del device_0,device
+            gc.collect()
+        print("")
 
     def validate(self,val_loader, model, epoch,opt,gbdt_features=None):
         valset = self.val_loader.dataset
@@ -300,8 +346,9 @@ class SPP_Torch(object):
             end = time.time()
 
             valset.isSaveItem = True
-            for i, (input, metal_true,thickness_true,images) in enumerate(val_loader):
-
+            for batch, (input, metal_true,thickness_true,indexs) in enumerate(val_loader):
+                indexs = indexs.cpu().numpy().tolist()
+                devices = [valset.devices[i] for i in indexs]
                 if args.gpu_device is not None:
                     input = input.cuda(args.gpu_device, non_blocking=True)
                     metal_true = metal_true.cuda(args.gpu_device, non_blocking=True)
@@ -310,7 +357,8 @@ class SPP_Torch(object):
                 thickness, metal_out = model(input)
                 loss = model.loss(thickness,thickness_true,metal_out,metal_true)
                 if self.check_model is not None:
-                    self.Plot_Compare(images,epoch,i,thickness, metal_out)
+                    self.Plot_Compare_1(devices,epoch,batch,thickness, metal_out)
+                    #self.Plot_Compare(devices, epoch, batch, thickness, metal_out)
 
                 # measure accuracy and record loss
                 _thick, _metal = accuracy(metal_out, metal_true,thickness, thickness_true)
@@ -401,7 +449,7 @@ if __name__ == '__main__':
     parser=InitParser()
     args = parser.parse_args()
     args = ArgsOnSpectrum(args)
-    args.dump_dir='E:/MetaLab/dump/'
+
     if False:
         thickness=[6,19,6,76,8,8,5,25,5,9]
         device = SP_device(thickness,['ag', 'ag', 'au', 'cu','au'],1,"",args)
@@ -410,5 +458,5 @@ if __name__ == '__main__':
     module = SPP_Model(config,nFilmLayer=10)
     learn = SPP_Torch(config, module)
     re_model="E:/MetaLab/models/spp/spp_7_21.pth.tar"
-    learn.Train_(resume=re_model)
+    learn.Train_(check_model=re_model)
     learn.Evaluate_()

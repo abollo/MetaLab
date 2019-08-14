@@ -90,6 +90,7 @@ class device_info:
     def __init__(self, info,path,id_=0):
         self.path = path
 
+        self.info = info
         info = info.replace('_', ' ').replace('(', ' ').replace(')', ' ').replace('[', ' ').replace(']', ' ')
         #tokens = re.split(" _\'('\')'\'['\']'", info)
         tokens = info.split( )
@@ -102,6 +103,7 @@ class device_info:
             h1,h2=(float)(tokens[3 * i + 2]),(float)(tokens[3 * i + 3])
             self.thickness.append(h1)
             self.thickness.append(h2)
+
 
     def metal_labels(self,x=0):
         labels=[]
@@ -283,9 +285,9 @@ class surfae_plasmon_set(data.Dataset):
         thickness = np.asarray(device.thickness).astype(np.float32)
         cv_imag=None
         if self.isSaveItem:
-            cv_imag = cv2.imread(img_path)
+            pass    #cv_imag = cv2.imread(img_path)
             #self.imag_list.append(cv_imag)
-        return data, metal_labels,thickness,cv_imag
+        return data, metal_labels,thickness,index
         #return tX_, tY_
 
     def __len__(self):
