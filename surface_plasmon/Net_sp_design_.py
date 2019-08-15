@@ -19,7 +19,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from utils.plot_tensor import *
 from Torch_config import *
-from sp_set import surfae_plasmon_set
+from sp_set import surfae_plasmon_set,spp_film,guided_metal_cost
 from spp_net import *
 from sp_spectrum import *
 import visdom
@@ -120,11 +120,25 @@ class SPP_Torch(object):
         self.config = config
         self.model = module
         self.config.normal = "normal"
-
+        self.check_model = None
+        self.guided_cost_fun = guided_metal_cost
         self.best_acc1 = 0
         print(f"====== Parameters ={config.__dict__}\n")
         self.LoadData()
         pass
+
+    def guided_(self,devices,metal_out, metal_true, P_thickness, thickness_true,cost_func):
+        batch_size = metal_true.size(0)
+        _, t1 = metal_out.topk(1, 2, True, True)
+        P_metal = t1.view(batch_size, -1)
+        for i in range(batch_size):
+            device = devices[i]
+            t1 = np.asarray(device.thickness).astype(np.float32)
+            t2 = thickness_true[i].cpu().numpy()
+            isEqual = np.array_equal(t1,t2)
+            assert(isEqual)
+            device.guided_update(P_metal[i].cpu().numpy(),P_thickness[i].cpu().numpy(),cost_func)
+
     
     def LoadData(self):
         """ Data loading code   """
@@ -133,7 +147,6 @@ class SPP_Torch(object):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     
         self.train_dataset, val_dataset = surfae_plasmon_set(self.config, tte='train'), surfae_plasmon_set(self.config, tte='eval')
-        # train_data.scan_folders('F:/AudioSet/train_npz/',classes, opt, opt.pkl_path + ".train", train=True)
         self.train_dataset.scan_folders(traindir, self.config, adptive=True)
         if self.config.distributed:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -205,12 +218,14 @@ class SPP_Torch(object):
         losses = AverageMeter()
         acc_thick = AverageMeter()
         acc_metal = AverageMeter()
-
+        trainset = train_loader.dataset
         # switch to train mode
         model.train()
 
         end = time.time()
         for i, (input, metal_true,thickness_true,indexs) in enumerate(train_loader):
+            indexs = indexs.cpu().numpy().tolist()
+            devices = [trainset.devices[i] for i in indexs]
             # measure data loading time
             data_time.update(time.time() - end)
             plot_batch_grid(input,self.dump_dir,"train",epoch,i)
@@ -239,6 +254,8 @@ class SPP_Torch(object):
             losses.update(loss.item(), input.size(0))
             acc_thick.update(_thick, input.size(0))
             acc_metal.update(_metal, input.size(0))
+            if self.guided_is_better is not None:
+                self.guided_(devices,metal_out, metal_true,thickness, thickness_true,self.guided_is_better)
 
             # compute gradient and do SGD step
             optimizer.zero_grad()
@@ -457,6 +474,6 @@ if __name__ == '__main__':
     config = TORCH_config(args)
     module = SPP_Model(config,nFilmLayer=10)
     learn = SPP_Torch(config, module)
-    re_model="E:/MetaLab/models/spp/spp_7_21.pth.tar"
-    learn.Train_(check_model=re_model)
+    pretrained_model=None   #"E:/MetaLab/models/spp/spp_7_21.pth.tar"
+    learn.Train_(check_model=pretrained_model)
     learn.Evaluate_()

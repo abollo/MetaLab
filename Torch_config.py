@@ -21,6 +21,7 @@ class TORCH_config(object):
 
         self.nMostCls = 5000
         self.input_shape = [3, 224, 224]
+        self.normal = "normal"
 
         if self.seed is not None:
             random.seed(self.seed)

@@ -13,6 +13,7 @@ import gzip
 import cv2
 import scipy
 from numba import jit
+import numbers
 
 
 def fig2data(fig):
@@ -37,14 +38,14 @@ def SPP_compare(device_0,device_1,title,path,args):
     dist = np.linalg.norm(device_0.R-device_1.R)/nrm_0
     if path is None or len(path) == 0:
         path = f"{args.compare_dir}/[{dist*100:.2g}]_{title}_.jpg"
-    img_0 = device_0.HeatMap(noAxis=False,title=f"Target\n{device_0.title}",cbar=False)
-    img_1 = device_1.HeatMap(noAxis=False,title=f"Prediction\n{device_1.title}",cbar=False)
+    img_0,_ = device_0.HeatMap(noAxis=False,title=f"Target\n{device_0.title}",cbar=False)
+    img_1,_ = device_1.HeatMap(noAxis=False,title=f"Prediction\n{device_1.title}",cbar=False)
     diff = np.abs(device_1.R - device_0.R)
     relative_diff=np.where(device_0.R==0, 0, diff/device_0.R) #diff/device_0.R
     max=diff.max()
     avg=diff.mean()
     desc=f"Difference\nmean={diff.mean():.2g} median={np.median(diff):.2g} max={diff.max():.2g}"
-    img_diff = device_0.HeatMap(R_=diff,noAxis=False,title=desc,cbar=True)
+    img_diff,_ = device_0.HeatMap(R_=diff,noAxis=False,title=desc,cbar=True)
     image_all = np.concatenate((img_0, img_1,img_diff), axis=1)
     #cv2.imshow("", image_all);    cv2.waitKey(0)
     cv2.imwrite(path,image_all)
@@ -90,25 +91,32 @@ class SP_device(object):
         if R_ is not None:
             assert(R_.shape == data.shape)
             data = R_
-        xitas = args.xitas
+        #xitas = args.xitas
         ticks = np.linspace(0, 1, 10)
         xlabels = [int(i) for i in np.linspace(300, 2000, 10)]
-        x0, x1 = xitas.min(), xitas.max()
+        x0, x1 = self.xitas.min(), self.xitas.max()
         ylabels = ["{:.3g}".format(i) for i in np.linspace(x0, x1, 10)]
 
         s = max(data.shape[1] / args.dpi, data.shape[0] / args.dpi)
-        figsize = (s*1.1,s*1.1)
-        fig, ax = plt.subplots(figsize=figsize,dpi=args.dpi)     #more concise than plt.figure:
+
         #fig.set_size_inches(18.5, 10.5)
         cmap = 'coolwarm'  # "plasma"  #https://matplotlib.org/examples/color/colormaps_reference.html
         #cmap = sns.cubehelix_palette(start=1, rot=3, gamma=0.8, as_cmap=True)
-        if noAxis:          # for training
+        if noAxis:          # tight samples for training(No text!!!)
+            figsize = (s , s )
+            fig, ax = plt.subplots(figsize=figsize, dpi=args.dpi)
             ax = sns.heatmap(data, ax=ax, cmap=cmap,cbar=False, xticklabels=False, yticklabels=False)
             path = '{}/all/{}_.jpg'.format(args.dump_dir,title)
-            ax.get_figure().savefig(path,bbox_inches='tight', pad_inches = 0)
-            image = fig2data(ax.get_figure())
-            return image
+            fig.savefig(path,bbox_inches='tight', pad_inches = 0)
+            image = cv2.imread(path)
+            #image = fig2data(ax.get_figure())      #会放大尺寸，难以理解
+            assert(image.shape==(693,697,3))        #必须固定一个尺寸
+            #cv2.imshow("",image);       cv2.waitKey(0)
+            plt.close("all")
+            return image,path
         else:       # for paper
+            figsize = (s * 1.1, s * 1.1)
+            fig, ax = plt.subplots(figsize=figsize, dpi=args.dpi)  # more concise than plt.figure:
             if title is None or len(title)==0:
                 ax.set_title('Reflectance\n{}'.format(self.title))
             else:
@@ -134,7 +142,7 @@ class SP_device(object):
 
             image = fig2data(ax.get_figure())
             plt.close("all")
-            return image
+            return image,""
     plt.close("all")
         #plt.show()
 
@@ -142,7 +150,7 @@ class SP_device(object):
 #attenuated total reflection (ATR) spectrum
     def R_2D(self,args,polarisation):
         d, n_data = self.thicks, self.n_data
-        nXita = len(args.xitas)
+        nXita = len(self.xitas)
         nLenda = len(args.lendas)
         self.R = np.zeros((nXita - 1, nLenda))
         M0 = np.zeros((2, 2, d.shape[0]), dtype=complex)
@@ -154,7 +162,7 @@ class SP_device(object):
                 M_t = M_t0
                 row = (int)(nXita - 2 - j);
                 col = (int)(i)  # 数据格式原因
-                r = jreftran_R(args.lendas[i], d, n_data[i, :], args.xitas[j], polarisation, M, M_t)
+                r = jreftran_R(args.lendas[i], d, n_data[i, :], self.xitas[j], polarisation, M, M_t)
                 if np.isnan(r):
                     print("nan@[{},{}]".format(row, col))
                 self.R[row, col] = r
@@ -165,7 +173,7 @@ class SP_device(object):
         del self.n_data,
         gc.collect()
 
-    def __init__(self,thickness,metals,polarisation,title,args):
+    def __init__(self,thickness,metals,polarisation,title,args,roi_xitas=None):
         assert( 'N_dict' in args.__dict__)
         N_dict = args.N_dict
         self.args = args
@@ -178,7 +186,8 @@ class SP_device(object):
 
         #xitas = np.arange(0, 90, 0.1)
         #xitas = np.arange(30, 60, 0.001)
-        nXita = len(args.xitas)
+        self.xitas = args.xitas_base if roi_xitas is None else roi_xitas
+        nXita = len(self.xitas)
         N = len(thickness)         #N_al + N_au
         k = 0
         self.thicks=np.zeros(N+2)
@@ -192,6 +201,8 @@ class SP_device(object):
                 d[i + 1] = thickness[i] * nm         #% [m]
                 if metals is not None:
                     mater= metals[(int)(i/2)]
+                    if isinstance(mater, numbers.Integral):
+                        mater = args.materials[mater]
                     self.maters.append(mater)
                     #type = (int)(np.random.uniform(0, len(materials)))
                     n_au = N_dict[mater]
@@ -243,25 +254,29 @@ def parse_args():
     return parser.parse_args()
 
 def ArgsOnSpectrum(args):
+    assert(args is not  None)
+
     args.dpi = 100
     args.delta_angle = 0.1
-    args.xitas = np.arange(0, 90 + args.delta_angle, args.delta_angle)
+    args.xitas_base = np.arange(0, 90 + args.delta_angle, args.delta_angle)
+    if False:  # 6.21   尝试
+        args.delta_angle = 0.001
+        args.xitas_base = np.arange(40, 55. + args.delta_angle, args.delta_angle)
     nm = 1.0e-9
     args.lendas = np.arange(300, 2010, 10) * nm
     args.mater_file_dir = 'E:/MetaLab/hyperbolic'
     args.N_dict = N_maters_dict(args)
+    args.polarisation = 1  # TM
 
     args.dump_dir='E:/MetaLab/dump/'
     args.compare_dir = 'E:/MetaLab/dump/compare/'
+    args.materials = ['au', 'ag', 'al', 'cu']
     return args
 
 if __name__ == '__main__':
     args = parse_args()
     args = ArgsOnSpectrum(args)
     args.random_seed = datetime.now()
-    if False:   #6.21   尝试
-        args.delta_angle=0.001
-        args.xitas = np.arange(40, 55.+args.delta_angle, args.delta_angle)
 
     N_case,case = 5000,0
     mType = 'random'        #'al'
@@ -271,7 +286,7 @@ if __name__ == '__main__':
     N_al, N_au = N_di, N_di
     d_al_TM = None  # randi([50, 1680], 1, N_al). / 10; % 168 =（300 - 25） / 1.44
     d_au = None
-    polarisation = 1  # TM
+
 
     # N_r_path,N_i_path = './hyperbolic/cu_n1.txt','./hyperbolic/cu_k1.txt'
     #d_au = ud_au * np.ones(N_au)
@@ -295,8 +310,8 @@ if __name__ == '__main__':
             h=random.uniform(5, 10)
             d_au.append((int)(h))
             sum = sum+h
-            materials = ['au', 'ag', 'al', 'cu']
-            metals.append(random.choice(materials))
+            #materials = ['au', 'ag', 'al', 'cu']
+            metals.append(random.choice(args.materials))
             #metals.applend['au']   固定为某种金属
         for no in range(N_di):
             #hSi = random.uniform(5, 168)
@@ -311,9 +326,8 @@ if __name__ == '__main__':
         if sum * 1.46 < (300):
             thickness = [None] * (N_au + N_di)
             thickness[::2] = d_au;            thickness[1::2] = d_al_TM
-            #device = SP_device(d_al_TM+d_au,metals, polarisation, mType, title, N_dict,args)
-            device = SP_device(thickness, metals, polarisation, title, args)
-            SPP_compare(device,device,"off","", args)
+            device = SP_device(thickness, metals, args.polarisation, title, args)
+            #SPP_compare(device,device,"off","", args)
             device.HeatMap()
             del device;     gc.collect()
             print("{}:\t{:.4g} sum={} d={},{}".format(case,time.time()-t0,sum,d_au,d_al_TM))

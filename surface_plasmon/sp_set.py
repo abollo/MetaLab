@@ -17,6 +17,9 @@ from PIL import Image
 from PIL import ImageEnhance
 #from utils.visualize import *
 from utils.plot_tensor import *
+from Torch_config import *
+from sp_spectrum import SP_device,ArgsOnSpectrum
+from spp_film import *
 import re
 
 '''
@@ -85,43 +88,9 @@ def list_dir(dir,extensions):
 dict_metal={
     'au':0, 'ag':1, 'al':2, 'cu':3
 }
-class device_info:
-    #   '188nm [ag(6)_31_cu(9)_20_al(6)_26_cu(8)_31_au(6)_45_]_'
-    def __init__(self, info,path,id_=0):
-        self.path = path
-
-        self.info = info
-        info = info.replace('_', ' ').replace('(', ' ').replace(')', ' ').replace('[', ' ').replace(']', ' ')
-        #tokens = re.split(" _\'('\')'\'['\']'", info)
-        tokens = info.split( )
-        self.ID = id_
-        self.metal_types = []       #only for some layers
-        self.thickness = []
-        nLayer = (int)((len(tokens)-1)/3)
-        for i in range(nLayer):
-            self.metal_types.append(tokens[3*i+1])
-            h1,h2=(float)(tokens[3 * i + 2]),(float)(tokens[3 * i + 3])
-            self.thickness.append(h1)
-            self.thickness.append(h2)
 
 
-    def metal_labels(self,x=0):
-        labels=[]
-        for metal in self.metal_types:
-            type = dict_metal[metal]
-            labels.append(type)
-        return labels
 
-    def __repr__(self):
-        return "class_info"
-
-    def __str__(self):
-        #return str(self.__class__) + ": " + str(self.__dict__)
-        return  "\n\t" + str(self.__dict__)
-
-    def nz(self):
-        nItem = len(self.items)
-        return nItem
 
 class SPP_TRANS(object):
     def __init__(self,params,tte):
@@ -217,11 +186,11 @@ class surfae_plasmon_set(data.Dataset):
             nz = nz + 1
             name, extension = os.path.splitext(file)
             if extension not in extensions:            continue
-            try:
-                device = device_info(name,f"{self.root}/{file}")
-            except:
-                print(f"Failed to load device@{self.root}/{file}")
-                continue
+            #try:
+            device = spp_film(params,name,f"{self.root}/{file}")
+            #except:
+            #    print(f"Failed to load device@{self.root}/{file}")
+            #   continue
             self.devices.append(device)
             if len(self.devices) > nMaxFile:
                 break
@@ -294,8 +263,16 @@ class surfae_plasmon_set(data.Dataset):
         nItem = len(self.devices)
         return nItem
 
-
-
 if __name__ == '__main__':
-    pass
+    config = TORCH_config(None)
+    config = ArgsOnSpectrum(config)
+    set = surfae_plasmon_set(config, tte='demo')
+    set.scan_folders('E:/MetaLab/hyperbolic/test/', config)
+    device = set.devices[0]
+    if True:
+        P_metal = np.asarray(device.metal_labels()).astype(np.int64)
+        P_thickness=np.asarray(device.thickness).astype(np.float32)
+        P_thickness[8] = 2
+        device.guided_update(config,P_metal,P_thickness,guided_metal_cost)
+
 
