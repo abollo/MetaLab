@@ -1,6 +1,11 @@
 import argparse
 import os
-import random
+import sys
+ROOT_DIR = os.path.abspath("../")
+sys.path.append(ROOT_DIR)  # To find local version of the library
+MODEL_DIR = os.path.abspath("../models/")
+sys.path.append(MODEL_DIR)  # To find local version of the library
+
 import shutil
 import time
 import warnings
@@ -130,14 +135,17 @@ class SPP_Torch(object):
     def guided_(self,devices,metal_out, metal_true, P_thickness, thickness_true,cost_func):
         batch_size = metal_true.size(0)
         _, t1 = metal_out.topk(1, 2, True, True)
-        P_metal = t1.view(batch_size, -1)
+        P_metals = t1.view(batch_size, -1)
         for i in range(batch_size):
             device = devices[i]
             t1 = np.asarray(device.thickness).astype(np.float32)
             t2 = thickness_true[i].cpu().numpy()
             isEqual = np.array_equal(t1,t2)
             assert(isEqual)
-            device.guided_update(P_metal[i].cpu().numpy(),P_thickness[i].cpu().numpy(),cost_func)
+            P_metal = P_metals[i]
+            P_thick = P_thickness[i]
+            P_thick = P_thick.detach().cpu().numpy()
+            device.guided_update(self.config,P_metal.cpu().numpy(),P_thick,cost_func)
 
     
     def LoadData(self):
@@ -146,7 +154,7 @@ class SPP_Torch(object):
         valdir = os.path.join(self.config.data, 'test/')
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     
-        self.train_dataset, val_dataset = surfae_plasmon_set(self.config, tte='train'), surfae_plasmon_set(self.config, tte='eval')
+        self.train_dataset, val_dataset = surfae_plasmon_set(self.config, tte='train'), surfae_plasmon_set(self.config, tte='eval',nMaxFile=1000)
         self.train_dataset.scan_folders(traindir, self.config, adptive=True)
         if self.config.distributed:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -254,8 +262,8 @@ class SPP_Torch(object):
             losses.update(loss.item(), input.size(0))
             acc_thick.update(_thick, input.size(0))
             acc_metal.update(_metal, input.size(0))
-            if self.guided_is_better is not None:
-                self.guided_(devices,metal_out, metal_true,thickness, thickness_true,self.guided_is_better)
+            if self.guided_cost_fun is not None:
+                self.guided_(devices,metal_out, metal_true,thickness, thickness_true,self.guided_cost_fun)
 
             # compute gradient and do SGD step
             optimizer.zero_grad()
@@ -328,11 +336,21 @@ class SPP_Torch(object):
         metal_out=metal_out.view(nSamp, -1)
         materials = ['au', 'ag', 'al', 'cu']
         for j in range(nSamp):
+            #if not(batch == 17 and j==8):   continue
+            cmp_title = f"{batch * 100 + j}"
+            thickness = thickness_out[j, :]
+            metal_nos = metal_out[j, :]
             img_path, metal_labels = devices[j].path, devices[j].metal_labels()
+            if self.guided_cost_fun is not None:
+                P_metals,cur_metals = metal_out[j,:],devices[j].metal_labels()
+                cost_1 = self.guided_cost_fun(cur_metals, devices[j].thickness)
+                cost_2 = self.guided_cost_fun(P_metals.cpu().numpy(), thickness.cpu().numpy())
+                delta = cost_1-cost_2
+                cmp_title=cmp_title+f"_[{delta:.4g}]"
+                print(f"\t{batch}-{j}\tcost=[{cost_1:.4g}-{cost_2:.4g}]\tdelta_cost={delta:.4g}/{delta*100/cost_1:.3g}% @{batch}:{j}")
             device_0 = SP_device(devices[j].thickness, devices[j].metal_types, 1, "", args)
             #img_0 = cv2.imread(img_path)
-            thickness=thickness_out[j,:]
-            metal_nos=metal_out[j,:]
+
             metals=[]
             for type in metal_nos:
                 assert(type>=0 and type<4)
@@ -340,7 +358,7 @@ class SPP_Torch(object):
             device = SP_device(thickness.cpu().numpy(), metals, 1, "", args)
             #path = f"{args.compare_dir}/{batch * 100 + j}_off_{device.title}.jpg"
 
-            SPP_compare(device_0, device,f"{batch * 100 + j}","", args)
+            SPP_compare(device_0, device,cmp_title,"", args)
             del device_0,device
             gc.collect()
         print("")
@@ -373,7 +391,7 @@ class SPP_Torch(object):
                 # compute output
                 thickness, metal_out = model(input)
                 loss = model.loss(thickness,thickness_true,metal_out,metal_true)
-                if self.check_model is not None:
+                if self.check_model is not None :
                     self.Plot_Compare_1(devices,epoch,batch,thickness, metal_out)
                     #self.Plot_Compare(devices, epoch, batch, thickness, metal_out)
 
@@ -474,6 +492,8 @@ if __name__ == '__main__':
     config = TORCH_config(args)
     module = SPP_Model(config,nFilmLayer=10)
     learn = SPP_Torch(config, module)
-    pretrained_model=None   #"E:/MetaLab/models/spp/spp_7_21.pth.tar"
+    #pretrained_model=None
+    #pretrained_model = "E:/MetaLab/models/spp/spp_7_21.pth.tar"
+    pretrained_model = "E:/MetaLab/models/spp/spp_guided_8_16.pth.tar"
     learn.Train_(check_model=pretrained_model)
     learn.Evaluate_()

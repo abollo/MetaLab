@@ -12,6 +12,13 @@ import pickle
 import seaborn as sns;      sns.set()
 from matplotlib.colors import LogNorm
 
+if False:       #hiddenlayer调用不便
+    import hiddenlayer as hl
+    import torchvision.models
+    model = torchvision.models.vgg16()
+    graph = hl.build_graph(model, torch.zeros([1, 3, 224, 224]))
+    graph.save(path="vgg_hl", format="jpg")
+    print("")
 
 # https://seaborn.pydata.org/generated/seaborn.lineplot.html
 def compare_loss_curve(files,hue_col,style_col=None):

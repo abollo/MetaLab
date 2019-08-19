@@ -110,7 +110,8 @@ class SP_device(object):
             fig.savefig(path,bbox_inches='tight', pad_inches = 0)
             image = cv2.imread(path)
             #image = fig2data(ax.get_figure())      #会放大尺寸，难以理解
-            assert(image.shape==(693,697,3))        #必须固定一个尺寸
+            if(len(title)>0):
+                assert(image.shape==self.args.spp_image_shape)        #必须固定一个尺寸
             #cv2.imshow("",image);       cv2.waitKey(0)
             plt.close("all")
             return image,path
@@ -155,7 +156,7 @@ class SP_device(object):
         self.R = np.zeros((nXita - 1, nLenda))
         M0 = np.zeros((2, 2, d.shape[0]), dtype=complex)
         M_t0 = np.identity(2, dtype=complex)
-        print("")
+
         for i in range(nLenda):  # wavelength's number
             for j in range(nXita - 1):  # angle
                 M = M0;
@@ -167,6 +168,7 @@ class SP_device(object):
                     print("nan@[{},{}]".format(row, col))
                 self.R[row, col] = r
         del M0,M_t0
+        self.R = self.R.astype(np.float32)
         gc.collect()
 
     def __del__(self):
@@ -228,7 +230,6 @@ class SP_device(object):
             self.R=np.zeros((nXita-1,nLenda))
             M0 = np.zeros((2, 2, d.shape[0]), dtype=complex)
             M_t0 = np.identity(2, dtype=complex)
-            print("")
             for i in range(nLenda):                   #wavelength's number
                 for j in range(nXita-1):              #angle
                     M=M0;      M_t=M_t0
@@ -271,6 +272,10 @@ def ArgsOnSpectrum(args):
     args.dump_dir='E:/MetaLab/dump/'
     args.compare_dir = 'E:/MetaLab/dump/compare/'
     args.materials = ['au', 'ag', 'al', 'cu']
+    args.dict_metal = {
+        'au': 0, 'ag': 1, 'al': 2, 'cu': 3
+    }
+    args.spp_image_shape = (693, 697, 3)
     return args
 
 if __name__ == '__main__':

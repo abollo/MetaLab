@@ -85,13 +85,6 @@ def list_dir(dir,extensions):
         files.append(file)
     return files
 
-dict_metal={
-    'au':0, 'ag':1, 'al':2, 'cu':3
-}
-
-
-
-
 class SPP_TRANS(object):
     def __init__(self,params,tte):
         self.params = params
@@ -150,7 +143,8 @@ class SPP_TRANS(object):
 
 
 class surfae_plasmon_set(data.Dataset):
-    def __init__(self, params,tte='train', user_trans=None ):
+    def __init__(self, params,tte='train', user_trans=None,nMaxFile=None ):
+        self.config = params
         self.random_pick = None
         self.imag_list = []
         self.isSaveItem=False
@@ -161,6 +155,7 @@ class surfae_plasmon_set(data.Dataset):
         self.key_map = {}
         self.tte = tte
         self.transform = user_trans
+        self.nMosFile = params.nMostCls if nMaxFile is None else nMaxFile
 
         normalize = TRANS.Normalize(mean = [0.485, 0.456, 0.406],std = [0.229, 0.224, 0.225])
         self.transforms=SPP_TRANS(params,self.tte)
@@ -180,8 +175,9 @@ class surfae_plasmon_set(data.Dataset):
         nAllItem=0
         id,self.devices= 0,[]
         extensions=['.jpg']
-        nz,nMinFile,nMaxFile = 0,0 ,params.nMostCls
+        nz,nMinFile = 0,0
         files = os.listdir(self.root)
+        t0=time.time()
         for file in files:
             nz = nz + 1
             name, extension = os.path.splitext(file)
@@ -192,8 +188,10 @@ class surfae_plasmon_set(data.Dataset):
             #    print(f"Failed to load device@{self.root}/{file}")
             #   continue
             self.devices.append(device)
-            if len(self.devices) > nMaxFile:
+            if len(self.devices) > self.nMosFile:
                 break
+            if nz%500==0:
+                print("------scan_folders@{}\tnItem={} time={:.4g} \t@@@\"{}\" ......".format(self.tte,self.__len__(),time.time()-t0,self.root ))
         #nAllItem = nAllItem+cls.nz()
 
         self.tLoad = 0
@@ -248,6 +246,8 @@ class surfae_plasmon_set(data.Dataset):
         device = self.devices[index]
         img_path,metal_labels = device.path,device.metal_labels()
         data = Image.open(img_path)
+        width, height = data.size
+        assert (width == self.config.spp_image_shape[1] and height == self.config.spp_image_shape[0])  # 必须固定一个尺寸
         data = self.transforms(data)
         #metal_labels = metal_labels[0]
         metal_labels = np.asarray(metal_labels).astype(np.int64)
@@ -266,13 +266,16 @@ class surfae_plasmon_set(data.Dataset):
 if __name__ == '__main__':
     config = TORCH_config(None)
     config = ArgsOnSpectrum(config)
-    set = surfae_plasmon_set(config, tte='demo')
+    set = surfae_plasmon_set(config, tte='demo',nMaxFile=5000)
     set.scan_folders('E:/MetaLab/hyperbolic/test/', config)
     device = set.devices[0]
     if True:
         P_metal = np.asarray(device.metal_labels()).astype(np.int64)
         P_thickness=np.asarray(device.thickness).astype(np.float32)
-        P_thickness[8] = 2
+        #P_thickness[8] = 2
+        #P_thickness[0] = P_thickness[0]-2
+        P_metal[1] = 1
         device.guided_update(config,P_metal,P_thickness,guided_metal_cost)
+        print("")
 
 
