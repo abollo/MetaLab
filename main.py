@@ -1,4 +1,17 @@
-#from visualdl import LogWriter
+'''
+    Please cite following paper:
+@article{chen2019smart,
+  title={Smart inverse design of graphene-based photonic metamaterials by an adaptive artificial neural network},
+  author={Chen, Yingshi and Zhu, Jinfeng and Xie, Yinong and Feng, Naixing and Liu, Qing Huo},
+  journal={Nanoscale},
+  volume={11},
+  number={19},
+  pages={9749--9755},
+  year={2019},
+  publisher={Royal Society of Chemistry}
+}
+'''
+
 from jreftran_rt import *
 from GraSi3N4 import *
 from Inverse import *

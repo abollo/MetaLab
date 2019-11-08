@@ -42,7 +42,12 @@ Example: Finding the coefficients for a 200nm gold layer surrounded by air, usin
 #@njit(float32(float32,float32[:],complex64 [:],float32, int32))
 #def jreftran_rt(wavelength: int,d:float,n:complex64,t0:float,polarization: int)-> float:
 #@jit
-def jreftran_rt(wavelength, d, n, t0, polarization,M,M_t):
+def jreftran_rt(wavelength, d, n, t0, polarization,M=None,M_t=None):
+    if M is None:       #在反复多次调用的情况下，可以一次性分配M,M_t
+        M = np.zeros((2, 2, d.shape[0]), dtype=complex)
+    if M_t is None:
+        M_t = np.identity(2, dtype=complex)
+
     # x = sind(np.array([0,90,180,359, 360]))
     Z0 = 376.730313     #impedance of free space, Ohms
     Y = n / Z0
@@ -134,6 +139,9 @@ if __name__ == '__main__':
     if True:    # Example: Finding the coefficients for a 200nm gold layer surrounded by air, using the Johnson and Christy data
         d = np.array([np.nan, 200, np.nan])     #%d = layer thickness vector, nm
         n = np.array([1, 0.9707 + 1.8562j, 1])     #%n = layer complex refractive index vector
-        r, t, R, T, A = jreftran_rt(500, d, n, 0, 0)
+        M = np.zeros((2, 2, d.shape[0]), dtype=complex)
+        M_t = np.identity(2, dtype=complex)
+
+        r, t, R, T, A = jreftran_rt(500, d, n, 0, 0,M,M_t)
 
     print("r={}\nt={}\nR={}\nT={}\nA={}\n".format(r, t, R, T, A))
