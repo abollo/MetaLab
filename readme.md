@@ -33,3 +33,7 @@ We may release code for more models.
 ## License
 
 [MIT](./LICENSE)
+
+## Authors
+
+`MetaLAB` was written by Yingshi Chen(gsp.cys@gmail.com).

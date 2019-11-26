@@ -184,7 +184,7 @@ class SPP_Torch(object):
 
         cudnn.benchmark = True
         if False and args.evaluate:
-            self.validate(self.val_loader, self.model, args)
+            self.validate(self.val_loader, self.model, args.start_epoch,args)
             return
         model_name = self.model.back_bone
         self.vis_title = "{}[{}]_most={}_lr={}".format(model_name,self.info,self.config.nMostCls,self.config.lr)
@@ -495,5 +495,6 @@ if __name__ == '__main__':
     #pretrained_model=None
     #pretrained_model = "E:/MetaLab/models/spp/spp_7_21.pth.tar"
     pretrained_model = "E:/MetaLab/models/spp/spp_guided_8_16.pth.tar"
+    #args.evaluate = True
     learn.Train_(check_model=pretrained_model)
     learn.Evaluate_()
