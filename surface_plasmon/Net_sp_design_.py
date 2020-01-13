@@ -100,7 +100,7 @@ def GetGBDT_featrues(model_path,model,vis_title, train_loader,val_loader, criter
     #optimizer.load_state_dict(checkpoint['optimizer'])
     print("=> loaded checkpoint '{}' (epoch {})".format(args.resume, checkpoint['epoch']))
     model.gbdt_features = []
-    acc_test,predicts = validate(vis_title, val_loader, model,  0,opt)
+    acc_test,predicts,_ = validate(vis_title, val_loader, model,  0,opt)
     assert (acc_test == best_acc1)
     testX = np.concatenate(model.gbdt_features)
     testY = GetTarget(val_loader)
@@ -136,6 +136,7 @@ class SPP_Torch(object):
         batch_size = metal_true.size(0)
         _, t1 = metal_out.topk(1, 2, True, True)
         P_metals = t1.view(batch_size, -1)
+        cost_all_0,cost_all_1 = 0.,0.
         for i in range(batch_size):
             device = devices[i]
             t1 = np.asarray(device.thickness).astype(np.float32)
@@ -145,7 +146,10 @@ class SPP_Torch(object):
             P_metal = P_metals[i]
             P_thick = P_thickness[i]
             P_thick = P_thick.detach().cpu().numpy()
-            device.guided_update(self.config,P_metal.cpu().numpy(),P_thick,cost_func)
+            isUpdate,cost_0,cost_1 = device.guided_update(self.config,P_metal.cpu().numpy(),P_thick,cost_func)
+            cost_all_0+=cost_0;         cost_all_1+=cost_1
+        return cost_all_0,cost_all_1
+
 
     
     def LoadData(self):
@@ -190,6 +194,8 @@ class SPP_Torch(object):
         self.vis_title = "{}[{}]_most={}_lr={}".format(model_name,self.info,self.config.nMostCls,self.config.lr)
         self.dump_dir = "E:/MetaLab/dump/"
         vis = visdom.Visdom(env=self.vis_title)
+        vis_cost_train = visdom.Visdom(env=self.vis_title+f"cost@train")
+        vis_cost_test = visdom.Visdom(env=self.vis_title + f"cost@test")
     
         for epoch in range(self.config.start_epoch, self.config.epochs):
             if self.config.distributed:
@@ -202,11 +208,14 @@ class SPP_Torch(object):
             else:
                 self.train_dataset.AdaptiveSample(self.config.nMostCls)
                 self.train_loader = torch.utils.data.DataLoader(self.train_dataset, batch_size=self.config.batch_size, shuffle=True,num_workers=self.config.workers)
-                self.train_core(self.train_loader, self.model, optimizer, epoch)
+                self.train_core(self.train_loader, self.model, optimizer, epoch,vis_cost_train)
     
             # evaluate on validation set
-            acc1,_ = self.validate(self.val_loader, self.model, epoch,self.config)
+            acc1,_,cost_val = self.validate(self.val_loader, self.model, epoch,self.config)
             vis_plot(self.config, vis, epoch, acc1,"SPP_net")
+
+            vis_plot(self.config, vis_cost_test, epoch, cost_val, "cost@test")
+
             # remember best acc@1 and save checkpoint
             is_best = acc1 > self.best_acc1
             self.best_acc1 = max(acc1, self.best_acc1)
@@ -219,7 +228,7 @@ class SPP_Torch(object):
             }, is_best)
 
 
-    def train_core(self,train_loader, model, optimizer, epoch):
+    def train_core(self,train_loader, model, optimizer, epoch,vis):
         args = self.config
         batch_time = AverageMeter()
         data_time = AverageMeter()
@@ -227,10 +236,12 @@ class SPP_Torch(object):
         acc_thick = AverageMeter()
         acc_metal = AverageMeter()
         trainset = train_loader.dataset
+        nSamp_0,nSamp = trainset.__len__(),0
         # switch to train mode
         model.train()
 
         end = time.time()
+        cost_all_0,cost_all_1,c0,c1=0,0,0,0,
         for i, (input, metal_true,thickness_true,indexs) in enumerate(train_loader):
             indexs = indexs.cpu().numpy().tolist()
             devices = [trainset.devices[i] for i in indexs]
@@ -258,12 +269,15 @@ class SPP_Torch(object):
 
 
             # measure accuracy and record loss
-            _thick,_metal = accuracy(metal_out, metal_true,thickness, thickness_true)
+            _thick,_metal,metal_pred = accuracy(metal_out, metal_true,thickness, thickness_true)
             losses.update(loss.item(), input.size(0))
             acc_thick.update(_thick, input.size(0))
             acc_metal.update(_metal, input.size(0))
             if self.guided_cost_fun is not None:
-                self.guided_(devices,metal_out, metal_true,thickness, thickness_true,self.guided_cost_fun)
+                c0,c1 = self.guided_(devices,metal_out, metal_true,thickness, thickness_true,self.guided_cost_fun)
+                cost_all_0+=c0;      cost_all_1+=c1
+                nSamp += input.shape[0]
+
 
             # compute gradient and do SGD step
             optimizer.zero_grad()
@@ -283,6 +297,11 @@ class SPP_Torch(object):
                       'Acc@metal type {top2.val:.3f} ({top2.avg:.3f})'.format(
                        epoch, i, len(train_loader), batch_time=batch_time,
                        data_time=data_time, loss=losses, top1=acc_thick, top2=acc_metal))
+
+            break
+        if nSamp>0:
+            vis_plot(self.config, vis, epoch, cost_all_0/nSamp, "cost_0@train")
+            #vis_plot(self.config, vis, epoch, cost_all_1/nSamp, "cost_1@train")
 
 #plot输出太累了
     def Plot_Compare(self,devices,epoch,batch,thickness_out, metal_out):
@@ -365,11 +384,13 @@ class SPP_Torch(object):
 
     def validate(self,val_loader, model, epoch,opt,gbdt_features=None):
         valset = self.val_loader.dataset
+        nVal = valset.__len__()
         args = self.config
         batch_time = AverageMeter()
         losses = AverageMeter()
         acc_thick = AverageMeter()
         acc_metal = AverageMeter()
+        cost_val=0
 
         # switch to evaluate mode
         model.eval()
@@ -396,7 +417,7 @@ class SPP_Torch(object):
                     #self.Plot_Compare(devices, epoch, batch, thickness, metal_out)
 
                 # measure accuracy and record loss
-                _thick, _metal = accuracy(metal_out, metal_true,thickness, thickness_true)
+                _thick, _metal,metal_pred = accuracy(metal_out, metal_true,thickness, thickness_true)
                 if False:        #each class by cys
                     for i in range(len(pred)):
                         cls = target[i]
@@ -406,18 +427,23 @@ class SPP_Torch(object):
                 losses.update(loss.item(), input.size(0))
                 acc_thick.update(_thick, input.size(0))
                 acc_metal.update(_metal, input.size(0))
+                batch_size = metal_true.size(0)
+                for i in range(batch_size):
+                    c0 = self.guided_cost_fun(metal_pred[i], thickness[i])
+                    cost_val+=c0
                 valset.after_batch()
                 # measure elapsed time
                 batch_time.update(time.time() - end)
                 end = time.time()
+                break
 
             print(' * Acc@Thickness {top1.avg:.3f} Acc@Metal type {top5.avg:.3f}'.format(top1=acc_thick, top5=acc_metal))
         for i in range(nClass):
             cls=['au', 'ag', 'al', 'cu'][i]
             nz=(int)(accu_cls_[i])
             #print("{}-{}-{:.3g}".format(cls,nz,accu_cls_1[i]/nz),end=" ")
-        print("err=".format(0))
-        return acc_thick.avg,predicts
+        print(f"cost_val={cost_val/nVal}")
+        return acc_thick.avg,predicts,cost_val/nVal
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
@@ -476,7 +502,7 @@ def accuracy(metal_out, metal_true,thickness_out, thickness_true):
                 p1,t1=pred_1.t().cpu().numpy().squeeze(),metal_true.cpu().numpy()
                 assert(p1.shape==t1.shape)
 
-        return thickness_accu,metal_accu
+        return thickness_accu,metal_accu,pred
         #return res,p1
 
 
@@ -492,9 +518,9 @@ if __name__ == '__main__':
     config = TORCH_config(args)
     module = SPP_Model(config,nFilmLayer=10)
     learn = SPP_Torch(config, module)
-    #pretrained_model=None
+    pretrained_model=None
     #pretrained_model = "E:/MetaLab/models/spp/spp_7_21.pth.tar"
-    pretrained_model = "E:/MetaLab/models/spp/spp_guided_8_16.pth.tar"
+    #pretrained_model = "E:/MetaLab/models/spp/spp_guided_8_16.pth.tar"
     #args.evaluate = True
     learn.Train_(check_model=pretrained_model)
     learn.Evaluate_()
