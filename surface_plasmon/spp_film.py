@@ -4,6 +4,16 @@ from sp_spectrum import *
 from sp_set import *
 import cv2
 
+'''
+online code to get the cost     https://repl.it/repls/PriceyStandardChords
+    pau, pag, pal, pcu=300.0, 3.5, 0.05, 0.1
+    au, ag, al, cu=0,0,0,0
+    au+=5+5
+    ag+=0
+    al+=0
+    cu+=5+5+5
+    print(pau*au+ ag*ag + pal*al + pcu*cu)
+'''
 def guided_metal_cost(metals, thickness):
     price = [300.0, 3.5, 0.05, 0.1]
     cost = 0
@@ -55,9 +65,7 @@ class spp_film:
         cost_0 = guided_metal_cost(self.metal_labels(), self.thickness)
         self.info_history.append((self.info,cost_0))
 
-    def guided_update(self,args,
-                      P_metal_,
-                      P_thickness_,cost_func):
+    def guided_update(self,args,P_metal,P_thickness_,cost_func):
         T_delta_off=0.1
         P_sum = P_thickness_.sum()
         cost_1 = cost_func(P_metal_, P_thickness_)
@@ -77,8 +85,7 @@ class spp_film:
         if nDiff>1:
             return False,cost_2,cost_1
 
-        device = SP_device(P_thickness_, P_metal_, args.polarisation, "", args,
-                           roi_xitas=guided_xitas)
+        device = SP_device(P_thickness_, P_metal_, args.polarisation, "", args,roi_xitas=guided_xitas)
         assert (self.feat_roi.shape == device.R.shape)
         nCol=(int)(device.R.shape[1]/2)
         f0 = np.linalg.norm(self.feat_roi[:,0:nCol])

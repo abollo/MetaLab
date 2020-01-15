@@ -44,7 +44,8 @@ class TORCH_config(object):
             dist.init_process_group(backend=self.dist_backend, init_method=self.dist_url,world_size=self.world_size)
         self.pretrained = True
 
-        self.lr = 0.0001
+        #self.lr = 0.0001       #1/14/2020  acc_metal@epoch_1=77.8
+        self.lr = 0.00001
         # self.lr = 0.01
 
 

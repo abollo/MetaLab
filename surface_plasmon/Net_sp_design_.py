@@ -196,6 +196,7 @@ class SPP_Torch(object):
         vis = visdom.Visdom(env=self.vis_title)
         vis_cost_train = visdom.Visdom(env=self.vis_title+f"cost@train")
         vis_cost_test = visdom.Visdom(env=self.vis_title + f"cost@test")
+        vis_metal = visdom.Visdom(env=self.vis_title + f"acc_metal@test")
     
         for epoch in range(self.config.start_epoch, self.config.epochs):
             if self.config.distributed:
@@ -211,9 +212,9 @@ class SPP_Torch(object):
                 self.train_core(self.train_loader, self.model, optimizer, epoch,vis_cost_train)
     
             # evaluate on validation set
-            acc1,_,cost_val = self.validate(self.val_loader, self.model, epoch,self.config)
+            acc1,_,cost_val,acc_metal = self.validate(self.val_loader, self.model, epoch,self.config)
             vis_plot(self.config, vis, epoch, acc1,"SPP_net")
-
+            vis_plot(self.config, vis_metal, epoch, acc1, "acc_metal")
             vis_plot(self.config, vis_cost_test, epoch, cost_val, "cost@test")
 
             # remember best acc@1 and save checkpoint
@@ -298,7 +299,7 @@ class SPP_Torch(object):
                        epoch, i, len(train_loader), batch_time=batch_time,
                        data_time=data_time, loss=losses, top1=acc_thick, top2=acc_metal))
 
-            break
+            #break
         if nSamp>0:
             vis_plot(self.config, vis, epoch, cost_all_0/nSamp, "cost_0@train")
             #vis_plot(self.config, vis, epoch, cost_all_1/nSamp, "cost_1@train")
@@ -435,7 +436,7 @@ class SPP_Torch(object):
                 # measure elapsed time
                 batch_time.update(time.time() - end)
                 end = time.time()
-                break
+                #break
 
             print(' * Acc@Thickness {top1.avg:.3f} Acc@Metal type {top5.avg:.3f}'.format(top1=acc_thick, top5=acc_metal))
         for i in range(nClass):
@@ -443,7 +444,7 @@ class SPP_Torch(object):
             nz=(int)(accu_cls_[i])
             #print("{}-{}-{:.3g}".format(cls,nz,accu_cls_1[i]/nz),end=" ")
         print(f"cost_val={cost_val/nVal}")
-        return acc_thick.avg,predicts,cost_val/nVal
+        return acc_thick.avg,predicts,cost_val/nVal,acc_metal
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
