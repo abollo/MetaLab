@@ -32,6 +32,7 @@ checkpoints/
 net_source/
 data/
 input/
+dump/
 
 # big files
 src/hand_detect/cnn_openpose/
@@ -269,3 +270,17 @@ ModelManifest.xml
 *.pyc
 *.dll
 *.avi
+*.rar
+*.info
+*.npy
+*.tar
+*.lua
+utils/.pytest_cache/v/cache/nodeids
+LiteCMM/jreftran_rt.py
+tmm_core.py
+hyperbolic/d_au_random.m
+hyperbolic/Hyperbolic_metamaterial_au.m
+hyperbolic/jreftran_rt.m
+surface_plasmon/spp_net - 副本.py
+surface_plasmon/7_15/sp_spectrum - 副本.py
+utils/vgg_hl

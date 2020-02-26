@@ -22,6 +22,9 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import numpy as np
 import matplotlib.pyplot as plt
+ROOT_DIR = os.path.abspath("../")
+sys.path.append(ROOT_DIR)
+import utils
 from utils.plot_tensor import *
 from Torch_config import *
 from sp_set import surfae_plasmon_set,spp_film,guided_metal_cost
@@ -506,7 +509,10 @@ def accuracy(metal_out, metal_true,thickness_out, thickness_true):
         return thickness_accu,metal_accu,pred
         #return res,p1
 
-
+'''
+    1)python -m visdom.server
+    2)Net_sp_design E:/MetaLab/hyperbolic/
+'''
 if __name__ == '__main__':
     parser=InitParser()
     args = parser.parse_args()

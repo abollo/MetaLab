@@ -65,7 +65,7 @@ class spp_film:
         cost_0 = guided_metal_cost(self.metal_labels(), self.thickness)
         self.info_history.append((self.info,cost_0))
 
-    def guided_update(self,args,P_metal,P_thickness_,cost_func):
+    def guided_update(self,args,P_metal_,P_thickness_,cost_func):
         T_delta_off=0.1
         P_sum = P_thickness_.sum()
         cost_1 = cost_func(P_metal_, P_thickness_)
