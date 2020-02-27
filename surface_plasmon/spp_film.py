@@ -65,52 +65,51 @@ class spp_film:
         cost_0 = guided_metal_cost(self.metal_labels(), self.thickness)
         self.info_history.append((self.info,cost_0))
 
-    def guided_update(self,args,P_metal_,P_thickness_,cost_func):
+    def guided_update(self,args,batch_no,no,P_metal_,P_thickness_,cost_func):        
         T_delta_off=0.1
         P_sum = P_thickness_.sum()
         cost_1 = cost_func(P_metal_, P_thickness_)
         cur_metal = self.metal_labels()
         cost_2 = cost_func(cur_metal, self.thickness)
-        if P_sum < self.thickness_base / 1.5 or P_sum > self.thickness_base * 1.5:
-            return False,cost_2,cost_1;
-        cost_1 = cost_func(P_metal_, P_thickness_)
-        cur_metal = self.metal_labels()
-        cost_2 = cost_func(cur_metal, self.thickness)
-        if cost_1>=cost_2:
-            return False,cost_2,cost_1
-        nMetal = len(cur_metal)
-        nDiff=0
-        for i in range(nMetal):
-            if(P_metal_[i] != cur_metal[i]):    nDiff=nDiff+1
-        if nDiff>1:
-            return False,cost_2,cost_1
+        if True:
+            if P_sum < self.thickness_base / 1.5 or P_sum > self.thickness_base * 1.5:
+                return False,cost_2,cost_1
+            cost_1 = cost_func(P_metal_, P_thickness_)
+            cur_metal = self.metal_labels()
+            cost_2 = cost_func(cur_metal, self.thickness)
+            if cost_1>=cost_2:
+                return False,cost_2,cost_1
+            nMetal = len(cur_metal)
+            nDiff=0
+            for i in range(nMetal):
+                if(P_metal_[i] != cur_metal[i]):    nDiff=nDiff+1
+            if nDiff>1:
+                return False,cost_2,cost_1
+            t0=time.time()
+            device = SP_device(P_thickness_, P_metal_, args.polarisation, "", args,roi_xitas=guided_xitas,feat_roi=self.feat_roi)
+            if device.R is None:
+                print(f"------{batch_no}::{no}",end="")
+                return False,cost_2,cost_1
+            assert (self.feat_roi.shape == device.R.shape)
+            nCol=(int)(device.R.shape[1]/2)
+            f0 = np.linalg.norm(self.feat_roi[:,0:nCol])
+            delta_off = np.linalg.norm(device.R[:,0:nCol] - self.feat_roi[:,0:nCol]) / f0
+            #print(f"------{batch_no}::{no}\t R_2D R={device.R.shape} nCol={nCol} time={time.time()-t0:.3f} \tdelta_off={delta_off:.2f} f0={f0:.2f}")
+            
+            if delta_off>T_delta_off:            
+                del device
+                return False,cost_2,cost_1
 
-        device = SP_device(P_thickness_, P_metal_, args.polarisation, "", args,roi_xitas=guided_xitas)
-        assert (self.feat_roi.shape == device.R.shape)
-        nCol=(int)(device.R.shape[1]/2)
-        f0 = np.linalg.norm(self.feat_roi[:,0:nCol])
-        delta_off = np.linalg.norm(device.R[:,0:nCol] - self.feat_roi[:,0:nCol]) / f0
-        if delta_off>T_delta_off:
             del device
-            return False,cost_2,cost_1
-
-        if False:
-            img_1,path_1=device.HeatMap()
-            device_0 = SP_device(self.thickness, self.metal_types, args.polarisation, "", args,
-                               roi_xitas=guided_xitas)
-            img_0, path_0 = device_0.HeatMap()
-            image_all = np.concatenate((img_0, img_1), axis=1)
-            cv2.imshow(f"{delta_off:.2g}/{f0}",image_all);          cv2.waitKey(0)
-        del device
-
         self.metal_types = []
         for metal in P_metal_:
             self.metal_types.append(self.args.materials[metal])
-        self.thickness=P_thickness_;
+        self.thickness=P_thickness_
+        title = f"{len(self.info_history)}_{self.ID}__{self.info}"
         device = SP_device(self.thickness, self.metal_types, args.polarisation, "", args)
-        _,self.path = device.HeatMap()
+        _,self.path = device.HeatMap(title=title)
         self.info = device.title
-        self.info_history.append((self.info,cost_1))
+        self.info_history.append((self.info,(float)(cost_1)))
         nInfo = len(self.info_history)
         print(f"guided_update {self.info_history[nInfo-2]}=>{self.info_history[nInfo-1]}")
         return True,cost_2,cost_1

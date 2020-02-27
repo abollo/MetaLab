@@ -111,6 +111,11 @@ class SP_device(object):
             image = cv2.imread(path)
             #image = fig2data(ax.get_figure())      #会放大尺寸，难以理解
             if(len(title)>0):
+                if(image.shape!=self.args.spp_image_shape):        #必须固定一个尺寸,https://stackoverflow.com/questions/13714454/specifying-and-saving-a-figure-with-exact-size-in-pixels
+                    dim = (self.args.spp_image_shape[1], self.args.spp_image_shape[0])
+                    image = cv2.resize(image,dim)
+                    cv2.imwrite(path,image)
+                    image = cv2.imread(path)
                 assert(image.shape==self.args.spp_image_shape)        #必须固定一个尺寸
             #cv2.imshow("",image);       cv2.waitKey(0)
             plt.close("all")
@@ -150,6 +155,7 @@ class SP_device(object):
 
 #attenuated total reflection (ATR) spectrum
     def R_2D(self,args,polarisation):
+        t0=time.time()
         d, n_data = self.thicks, self.n_data
         nXita = len(self.xitas)
         nLenda = len(args.lendas)
@@ -170,12 +176,43 @@ class SP_device(object):
         del M0,M_t0
         self.R = self.R.astype(np.float32)
         gc.collect()
+        #print(f"------ R_2D R={self.R.shape} time={time.time()-t0:.3f}")
+    
+    def Guided_R_2D(self,args,polarisation,feat_roi):
+        t0=time.time()
+        d, n_data = self.thicks, self.n_data
+        nXita = len(self.xitas)
+        nLenda = len(args.lendas)
+        self.R = np.zeros((nXita - 1, nLenda))
+        assert feat_roi.shape == self.R.shape
+        M0 = np.zeros((2, 2, d.shape[0]), dtype=complex)
+        M_t0 = np.identity(2, dtype=complex)
+
+        for i in range(nLenda):  # wavelength's number
+            for j in range(nXita - 1):  # angle
+                M = M0;                M_t = M_t0
+                row = (int)(nXita - 2 - j);                col = (int)(i)  # 数据格式原因
+                r = jreftran_R(args.lendas[i], d, n_data[i, :], self.xitas[j], polarisation, M, M_t)
+                if np.isnan(r):
+                    print("nan@[{},{}]".format(row, col))
+                self.R[row, col] = r
+            delta_off = np.linalg.norm(self.R[:, i]-feat_roi[:, i])
+            f0 = np.linalg.norm(feat_roi[:, i])
+            if delta_off > max(0.01,f0*0.2):
+                print(f"\r\t------ [{row}] f0={f0:.3f} delta_off={delta_off:.3f}@{args.lendas[i]:.2f} time={time.time()-t0:.3f}",end="")
+                self.R=None;        del M0,M_t0
+                gc.collect()
+                return
+        del M0,M_t0
+        self.R = self.R.astype(np.float32)
+        gc.collect()
+
 
     def __del__(self):
         del self.n_data,
         gc.collect()
 
-    def __init__(self,thickness,metals,polarisation,title,args,roi_xitas=None):
+    def __init__(self,thickness,metals,polarisation,title,args,roi_xitas=None,feat_roi=None):
         assert( 'N_dict' in args.__dict__)
         N_dict = args.N_dict
         self.args = args
@@ -224,21 +261,11 @@ class SP_device(object):
         n_data[:,N+1] = 1       #air
         #print("lenda={}\nd={}\nn_data={}\nxitas={}".format(lendas,d,n_data,xitas))
 
-        if True:
+        if feat_roi is None:
             self.R_2D(args,polarisation)
         else:
-            self.R=np.zeros((nXita-1,nLenda))
-            M0 = np.zeros((2, 2, d.shape[0]), dtype=complex)
-            M_t0 = np.identity(2, dtype=complex)
-            for i in range(nLenda):                   #wavelength's number
-                for j in range(nXita-1):              #angle
-                    M=M0;      M_t=M_t0
-                    row = (int)(nXita-1-j);  col=(int)(i)   #数据格式原因
-                    r = jreftran_R(lendas[i],d,n_data[i,:],args.xitas[j],polarisation,M,M_t)
-                    if np.isnan(r):
-                        print("nan@[{},{}]".format(row,col))
-                    self.R[row,col] = r
-            del M,M_t;        gc.collect()
+            self.Guided_R_2D(args,polarisation,feat_roi)
+        
 
 
 def parse_args():
@@ -249,7 +276,7 @@ def parse_args():
         help='the gpu id to train net')
     parser.add_argument('-m', '--model', type=str, default='model/bdcn_pretrained_on_bsds500.pth',#'params/bdcn_final.pth',
         help='the model to test')
-    parser.add_argument('--dump-dir', type=str, default='E:/MetaLab/hyperbolic/',
+    parser.add_argument('--dump-dir', type=str, default='D:/MetaLab/hyperbolic/',
         help='the dir to store result')
     parser.add_argument('-layers', type=int, default=5,help='the number of layers')
     return parser.parse_args()
@@ -265,12 +292,12 @@ def ArgsOnSpectrum(args):
         args.xitas_base = np.arange(40, 55. + args.delta_angle, args.delta_angle)
     nm = 1.0e-9
     args.lendas = np.arange(300, 2010, 10) * nm
-    args.mater_file_dir = 'E:/MetaLab/hyperbolic'
+    args.mater_file_dir = f'{args.data_root}/hyperbolic'
     args.N_dict = N_maters_dict(args)
     args.polarisation = 1  # TM
 
-    args.dump_dir='E:/MetaLab/dump/'
-    args.compare_dir = 'E:/MetaLab/dump/compare/'
+    args.dump_dir=f'{args.data_root}/dump/'
+    args.compare_dir = f'{args.data_root}/dump/compare/'
     args.materials = ['au', 'ag', 'al', 'cu']
     args.dict_metal = {
         'au': 0, 'ag': 1, 'al': 2, 'cu': 3

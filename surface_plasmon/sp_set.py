@@ -177,13 +177,16 @@ class surfae_plasmon_set(data.Dataset):
         extensions=['.jpg']
         nz,nMinFile = 0,0
         files = os.listdir(self.root)
+        nFiles = len(files)
         t0=time.time()
+        #self.nMosFile=5
         for file in files:
             nz = nz + 1
             name, extension = os.path.splitext(file)
-            if extension not in extensions:            continue
+            if extension not in extensions:            
+                continue
             #try:
-            device = spp_film(params,name,f"{self.root}/{file}")
+            device = spp_film(params,name,f"{self.root}/{file}",id_=nz)
             #except:
             #    print(f"Failed to load device@{self.root}/{file}")
             #   continue
@@ -247,6 +250,8 @@ class surfae_plasmon_set(data.Dataset):
         img_path,metal_labels = device.path,device.metal_labels()
         data = Image.open(img_path)
         width, height = data.size
+        if width!= self.config.spp_image_shape[1] or height != self.config.spp_image_shape[0]:
+            print(f"!!!surfae_plasmon_set::__getitem__ failed at {img_path} width={width} height={height}!!!")
         assert (width == self.config.spp_image_shape[1] and height == self.config.spp_image_shape[0])  # 必须固定一个尺寸
         data = self.transforms(data)
         #metal_labels = metal_labels[0]
@@ -267,7 +272,7 @@ if __name__ == '__main__':
     config = TORCH_config(None)
     config = ArgsOnSpectrum(config)
     set = surfae_plasmon_set(config, tte='demo',nMaxFile=5000)
-    set.scan_folders('E:/MetaLab/hyperbolic/test/', config)
+    set.scan_folders(f'{config.data_root}/hyperbolic/test/', config)
     device = set.devices[0]
     if True:
         P_metal = np.asarray(device.metal_labels()).astype(np.int64)

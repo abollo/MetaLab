@@ -62,7 +62,7 @@ class SPP_Model(torch.nn.Module, ):
         # model_name='vgg16_bn'
         # model_name='vgg11_bn'
         # model_name='dpn68'      #learning rate=0.0001 效果较好
-        self.back_bone = 'resnet18_x'
+        #self.back_bone = 'resnet18_x'
         self.back_bone = 'resnet34'
         # model_name='dpn92'
         # model_name='senet154'
@@ -75,8 +75,7 @@ class SPP_Model(torch.nn.Module, ):
 
         self.config = config
         self.pick_models()
-        #self.resNet = models.resnet18(pretrained=True)
-        self.resNet = models.resnet50(pretrained=True)
+        
         print(f"=> creating model '{self.back_bone}'")
         #self.use_gpu = torch.cuda.is_available()
         self.nFilmLayer = nFilmLayer
@@ -88,8 +87,10 @@ class SPP_Model(torch.nn.Module, ):
         self.activations = None
 
         if self.back_bone == 'resnet18_x':
+            self.resNet = models.resnet18(pretrained=True)
             self.fc1 = nn.Linear(512, 512)
         else:
+            self.resNet = models.resnet50(pretrained=True)
             self.fc1 = nn.Linear(2048, 512)
         self.thickness_pred = nn.Linear(512, self.nFilmLayer)
 
@@ -243,6 +244,7 @@ if __name__ == "__main__":
         cur_cls = torch.ones((16,4))
         t0[:,1,:] = cur_cls
     config = TORCH_config(None)
+
     a = SPP_Model(config,nFilmLayer=10)
     print(f"SPP_Model={a}")
     pass

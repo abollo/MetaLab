@@ -135,7 +135,7 @@ class SPP_Torch(object):
         self.LoadData()
         pass
 
-    def guided_(self,devices,metal_out, metal_true, P_thickness, thickness_true,cost_func):
+    def guided_(self,devices,batch_no,metal_out, metal_true, P_thickness, thickness_true,cost_func):
         batch_size = metal_true.size(0)
         _, t1 = metal_out.topk(1, 2, True, True)
         P_metals = t1.view(batch_size, -1)
@@ -149,7 +149,7 @@ class SPP_Torch(object):
             P_metal = P_metals[i]
             P_thick = P_thickness[i]
             P_thick = P_thick.detach().cpu().numpy()
-            isUpdate,cost_0,cost_1 = device.guided_update(self.config,P_metal.cpu().numpy(),P_thick,cost_func)
+            isUpdate,cost_0,cost_1 = device.guided_update(self.config,batch_no,i,P_metal.cpu().numpy(),P_thick,cost_func)
             cost_all_0+=cost_0;         cost_all_1+=cost_1
         return cost_all_0,cost_all_1
 
@@ -163,14 +163,15 @@ class SPP_Torch(object):
     
         self.train_dataset, val_dataset = surfae_plasmon_set(self.config, tte='train'), surfae_plasmon_set(self.config, tte='eval',nMaxFile=1000)
         self.train_dataset.scan_folders(traindir, self.config, adptive=True)
-        if self.config.distributed:
-            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-        else:
-            train_sampler = None
+        nTrainSamp = len(self.train_dataset.devices)
+        firstSamp,lastSamp = self.train_dataset.devices[0],self.train_dataset.devices[-1]
+        assert lastSamp.ID == nTrainSamp
+        train_sampler = None
     
         val_dataset.scan_folders(valdir, self.config, adptive=False)
         self.val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False,
                                                  num_workers=self.config.workers, pin_memory=True)
+        print(f"====== LoadData nTrain={nTrainSamp} firstSamp={firstSamp}\n\tlastSamp={lastSamp}")
 
 
     def Train_(self,check_model=None):
@@ -195,7 +196,7 @@ class SPP_Torch(object):
             return
         model_name = self.model.back_bone
         self.vis_title = "{}[{}]_most={}_lr={}".format(model_name,self.info,self.config.nMostCls,self.config.lr)
-        self.dump_dir = "E:/MetaLab/dump/"
+        self.dump_dir = f"{self.config.data_root}/dump/"
         vis = visdom.Visdom(env=self.vis_title)
         vis_cost_train = visdom.Visdom(env=self.vis_title+f"cost@train")
         vis_cost_test = visdom.Visdom(env=self.vis_title + f"cost@test")
@@ -235,6 +236,7 @@ class SPP_Torch(object):
     def train_core(self,train_loader, model, optimizer, epoch,vis):
         args = self.config
         batch_time = AverageMeter()
+        guide_time = AverageMeter()
         data_time = AverageMeter()
         losses = AverageMeter()
         acc_thick = AverageMeter()
@@ -278,8 +280,10 @@ class SPP_Torch(object):
             acc_thick.update(_thick, input.size(0))
             acc_metal.update(_metal, input.size(0))
             if self.guided_cost_fun is not None:
-                c0,c1 = self.guided_(devices,metal_out, metal_true,thickness, thickness_true,self.guided_cost_fun)
+                t1 = time.time()
+                c0,c1 = self.guided_(devices,i,metal_out, metal_true,thickness, thickness_true,self.guided_cost_fun)
                 cost_all_0+=c0;      cost_all_1+=c1
+                guide_time.update(time.time() - t1)
                 nSamp += input.shape[0]
 
 
@@ -293,14 +297,14 @@ class SPP_Torch(object):
             end = time.time()
 
             if i % args.print_freq == 0:
-                print('Epoch: [{0}][{1}/{2}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                print('\n====== EPOCH_{0} [{1}/{2}]\t'
+                      'Batch_Time  {batch_time.avg:.3f}({batch_time.val:.3f})\t'
+                      'Guide_Time  {guide_time.avg:.3f}({guide_time.val:.3f})\t'
                       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                       'Acc@thickness {top1.val:.3f} ({top1.avg:.3f})\t'
                       'Acc@metal type {top2.val:.3f} ({top2.avg:.3f})'.format(
                        epoch, i, len(train_loader), batch_time=batch_time,
-                       data_time=data_time, loss=losses, top1=acc_thick, top2=acc_metal))
+                       guide_time=guide_time, loss=losses, top1=acc_thick, top2=acc_metal))
 
             #break
         if nSamp>0:
@@ -516,6 +520,7 @@ def accuracy(metal_out, metal_true,thickness_out, thickness_true):
 if __name__ == '__main__':
     parser=InitParser()
     args = parser.parse_args()
+    args.data_root = "E:/MetaLab/"
     args = ArgsOnSpectrum(args)
 
     if False:
@@ -523,11 +528,14 @@ if __name__ == '__main__':
         device = SP_device(thickness,['ag', 'ag', 'au', 'cu','au'],1,"",args)
         device.HeatMap()
     config = TORCH_config(args)
+    config.print_freq = 50
+    config.workers = 1
+    
     module = SPP_Model(config,nFilmLayer=10)
     learn = SPP_Torch(config, module)
     pretrained_model=None
-    #pretrained_model = "E:/MetaLab/models/spp/spp_7_21.pth.tar"
-    #pretrained_model = "E:/MetaLab/models/spp/spp_guided_8_16.pth.tar"
+    #pretrained_model = f"{config.data_root}/models/spp/spp_7_21.pth.tar"
+    #pretrained_model = f"{config.data_root}/models/spp/spp_guided_8_16.pth.tar"
     #args.evaluate = True
     learn.Train_(check_model=pretrained_model)
-    learn.Evaluate_()
+    #learn.Evaluate_()

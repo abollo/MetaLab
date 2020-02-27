@@ -1,3 +1,10 @@
+'''
+@Author: Yingshi Chen
+
+@Date: 2019-11-26 16:10:19
+@
+# Description: 
+'''
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
@@ -5,11 +12,12 @@ import os
 import pickle
 import seaborn as sns;      sns.set()
 import cv2
-pkl_acti_visual="E:/MetaLab/dump/all_activations.pkl"
+data_root="D:/MetaLab"
+pkl_acti_visual=f"{data_root}/dump/all_activations.pkl"
 
 def HeatMap(data,title="",noAxis=True,cbar=True):
     dpi = 100
-    dump_dir = "E:/MetaLab/dump/"
+    dump_dir = f"{data_root}/dump/"
     sns.set(font_scale=2)
     assert (data is not None)
     #xitas = args.xitas
