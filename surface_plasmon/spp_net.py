@@ -117,9 +117,12 @@ class SPP_Model(torch.nn.Module, ):
             self = torch.nn.DataParallel(self).cuda()
         print(f"{self}\nthickness_criterion={self.thickness_criterion}\nmetal_criterion={self.metal_criterion}")
 
-    def loss(self,thickness,thickness_true,metal_out,metal_true):
+    def loss(self,thickness,thickness_true,metal_out,metal_true,cost_func=None):
         nSample = metal_out.shape[0]
         thickness_loss = self.thickness_criterion(thickness, thickness_true)
+        _, t1 = metal_out.topk(1, 2, True, True)
+        metal_cls = t1.view(nSample,-1)
+        cost_loss = 0
         if self.hybrid_metal > 0:
             metal_loss = 0
             for i in range(nSample):
@@ -127,6 +130,7 @@ class SPP_Model(torch.nn.Module, ):
                     t1 = metal_out[i][j].unsqueeze(0)
                     t2 = metal_true[i][j].unsqueeze(0)
                     metal_loss = metal_loss+self.metal_criterion(t1,t2)
+                #cost_loss = cost_loss+cost_func(metal_cls[i], thickness[i])
             loss = metal_loss * self.hybrid_metal + thickness_loss * (1 - self.hybrid_metal)
         else:
             loss = thickness_loss

@@ -169,7 +169,7 @@ class SPP_Torch(object):
         train_sampler = None
     
         val_dataset.scan_folders(valdir, self.config, adptive=False)
-        self.val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False,
+        self.val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=64, shuffle=False,
                                                  num_workers=self.config.workers, pin_memory=True)
         print(f"====== LoadData nTrain={nTrainSamp} firstSamp={firstSamp}\n\tlastSamp={lastSamp}")
 
@@ -216,9 +216,10 @@ class SPP_Torch(object):
                 self.train_core(self.train_loader, self.model, optimizer, epoch,vis_cost_train)
     
             # evaluate on validation set
-            acc1,_,cost_val,acc_metal = self.validate(self.val_loader, self.model, epoch,self.config)
-            vis_plot(self.config, vis, epoch, acc1,"SPP_net")
-            vis_plot(self.config, vis_metal, epoch, acc1, "acc_metal")
+            acc_spectrum,_,cost_val,acc_metal = self.validate(self.val_loader, self.model, epoch,self.config)
+            acc1 = acc_spectrum.avg
+            vis_plot(self.config, vis, epoch, acc1,"acc_spectrum")
+            vis_plot(self.config, vis_metal, epoch, acc_metal.avg, "acc_metal")
             vis_plot(self.config, vis_cost_test, epoch, cost_val, "cost@test")
 
             # remember best acc@1 and save checkpoint
@@ -262,7 +263,7 @@ class SPP_Torch(object):
 
             # compute output
             thickness, metal_out = model(input)
-            loss = model.loss(thickness, thickness_true, metal_out, metal_true)
+            loss = model.loss(thickness, thickness_true, metal_out, metal_true,self.guided_cost_fun)
             if False:
                 _, metal_max = torch.max(metal_out, 1)
                 _, thickness_max = torch.max(thickness, 1)
@@ -388,9 +389,11 @@ class SPP_Torch(object):
             SPP_compare(device_0, device,cmp_title,"", args)
             del device_0,device
             gc.collect()
-        print("")
+        print("")    
+
 
     def validate(self,val_loader, model, epoch,opt,gbdt_features=None):
+        t0 = time.time()
         valset = self.val_loader.dataset
         nVal = valset.__len__()
         args = self.config
@@ -398,6 +401,7 @@ class SPP_Torch(object):
         losses = AverageMeter()
         acc_thick = AverageMeter()
         acc_metal = AverageMeter()
+        acc_spectrum = AverageMeter()
         cost_val=0
 
         # switch to evaluate mode
@@ -412,6 +416,7 @@ class SPP_Torch(object):
             valset.isSaveItem = True
             for batch, (input, metal_true,thickness_true,indexs) in enumerate(val_loader):
                 indexs = indexs.cpu().numpy().tolist()
+                batch_size = len(indexs)
                 devices = [valset.devices[i] for i in indexs]
                 if args.gpu_device is not None:
                     input = input.cuda(args.gpu_device, non_blocking=True)
@@ -419,6 +424,18 @@ class SPP_Torch(object):
                     thickness_true = thickness_true.cuda(args.gpu_device, non_blocking=True)
                 # compute output
                 thickness, metal_out = model(input)
+                _, t1 = metal_out.topk(1, 2, True, True)
+                P_metals = t1.view(batch_size, -1).cpu().numpy()
+                spec_index =  random.sample(range(batch_size), max(1,batch_size//60))
+                for id in spec_index:       #validate应该以2d spectrum heatmap为主
+                    guided_xitas=np.concatenate((np.arange(30, 35, 1),np.arange(35, 50, 0.2), np.arange(50, 90, 1)))
+                    device_id,device_0 = indexs[id],valset.devices[indexs[id]]                    
+                    device_1 = SP_device(thickness[id,:].cpu().numpy(),P_metals[id,:], args.polarisation, "", args,roi_xitas=guided_xitas)
+                    nCol=(int)(device_1.R.shape[1]/2)
+                    f0 = np.linalg.norm(device_0.feat_roi[:,0:nCol])
+                    delta_off = np.linalg.norm(device_1.R[:,0:nCol] - device_0.feat_roi[:,0:nCol]) / f0
+                    acc_spectrum.update(1-delta_off, 1)
+
                 loss = model.loss(thickness,thickness_true,metal_out,metal_true)
                 if self.check_model is not None :
                     self.Plot_Compare_1(devices,epoch,batch,thickness, metal_out)
@@ -445,13 +462,13 @@ class SPP_Torch(object):
                 end = time.time()
                 #break
 
-            print(' * Acc@Thickness {top1.avg:.3f} Acc@Metal type {top5.avg:.3f}'.format(top1=acc_thick, top5=acc_metal))
+            print(f'\n****** EPOCH_{epoch} validate::Acc_Spectrum {acc_spectrum.avg:.3f} @{acc_spectrum.count} Acc_Thickness {acc_thick.avg:.3f} Acc_Metal type {acc_metal.avg:.3f}')
         for i in range(nClass):
             cls=['au', 'ag', 'al', 'cu'][i]
             nz=(int)(accu_cls_[i])
             #print("{}-{}-{:.3g}".format(cls,nz,accu_cls_1[i]/nz),end=" ")
-        print(f"cost_val={cost_val/nVal}")
-        return acc_thick.avg,predicts,cost_val/nVal,acc_metal
+        print(f"====== cost_val={cost_val/nVal:.4f} time={time.time()-t0:.3f}")
+        return acc_spectrum,predicts,cost_val/nVal,acc_metal
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
