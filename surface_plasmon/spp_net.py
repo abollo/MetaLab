@@ -62,8 +62,8 @@ class SPP_Model(torch.nn.Module, ):
         # model_name='vgg16_bn'
         # model_name='vgg11_bn'
         # model_name='dpn68'      #learning rate=0.0001 效果较好
-        #self.back_bone = 'resnet18_x'
-        self.back_bone = 'resnet34'
+        self.back_bone = 'resnet18_x'
+        #self.back_bone = 'resnet34'
         # model_name='dpn92'
         # model_name='senet154'
         # model_name='densenet121'

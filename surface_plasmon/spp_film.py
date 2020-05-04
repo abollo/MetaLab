@@ -5,8 +5,16 @@ from sp_set import *
 import cv2
 
 '''
+metal cost at https://www.bloomberg.com/markets/commodities/futures/metals 5/3/2020
+    材料        彭博社报价(5/3/2020)                    密度                系数
+    Au  1,700.90-USD/oz	    60 美元/克              19.32克/立方厘米        1159.2
+    Ag  14.94-USD/oz        0.53 美元/克            10.53克/立方厘米        5.58
+    Cu  5,110.00-USD/MT	    0.005 美元/克           8.9克/立方厘米	        0.045 
+    Al	1,487.00-USD/MT	    0.0015 美元/克          2.7克/立方厘米	        0.004
+    
 online code to get the cost     https://repl.it/repls/PriceyStandardChords
-    pau, pag, pal, pcu=300.0, 3.5, 0.05, 0.1
+    pau, pag, pal, pcu=300.0, 3.5, 0.05, 0.1        #不考虑密度
+    pau, pag, pal, pcu=1159.2, 5.58, 0.045 , 0.004  #考虑密度
     au, ag, al, cu=0,0,0,0
     au+=5+5
     ag+=0
@@ -15,7 +23,8 @@ online code to get the cost     https://repl.it/repls/PriceyStandardChords
     print(pau*au+ ag*ag + pal*al + pcu*cu)
 '''
 def guided_metal_cost(metals, thickness):
-    price = [300.0, 3.5, 0.05, 0.1]
+    price = [300.0, 3.5, 0.05, 0.1]         #不考虑密度
+    price = [1159.2, 5.58, 0.045, 0.004]    #考虑密度       $/cm3
     cost = 0
     i = 0
     for metal in metals:

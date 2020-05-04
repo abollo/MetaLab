@@ -169,7 +169,7 @@ class SPP_Torch(object):
         train_sampler = None
     
         val_dataset.scan_folders(valdir, self.config, adptive=False)
-        self.val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=64, shuffle=False,
+        self.val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False,
                                                  num_workers=self.config.workers, pin_memory=True)
         print(f"====== LoadData nTrain={nTrainSamp} firstSamp={firstSamp}\n\tlastSamp={lastSamp}")
 
@@ -434,7 +434,7 @@ class SPP_Torch(object):
                     nCol=(int)(device_1.R.shape[1]/2)
                     f0 = np.linalg.norm(device_0.feat_roi[:,0:nCol])
                     delta_off = np.linalg.norm(device_1.R[:,0:nCol] - device_0.feat_roi[:,0:nCol]) / f0
-                    acc_spectrum.update(1-delta_off, 1)
+                    acc_spectrum.update(100.0*(1-delta_off), 1)
 
                 loss = model.loss(thickness,thickness_true,metal_out,metal_true)
                 if self.check_model is not None :
@@ -547,6 +547,9 @@ if __name__ == '__main__':
     config = TORCH_config(args)
     config.print_freq = 50
     config.workers = 1
+    config.batch_size = 64
+    config.lr = 0.001
+    config.lr = 0.01
     
     module = SPP_Model(config,nFilmLayer=10)
     learn = SPP_Torch(config, module)
